@@ -56,7 +56,6 @@ The examples are organized into the following structure:
     │   ├── mcp_inspect_response.py
     │   └── mcp_inspect_tool_call.py
     ├── mcpscan/                 # MCP server scanning examples
-    │   ├── manage_mcp_events.py
     │   ├── manage_mcp_policies.py
     │   ├── manage_mcp_servers.py
     │   ├── manage_resource_connections.py

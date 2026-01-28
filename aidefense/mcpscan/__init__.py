@@ -18,7 +18,6 @@ from .mcp_scan_base import MCPScan
 from .mcp_scan import MCPScanClient
 from .resource_connections import ResourceConnectionClient
 from .policies import MCPPolicyClient
-from .events import MCPEventClient
 from .models import (
     # Enums
     TransportType,
@@ -189,21 +188,3 @@ from aidefense.management.models.policy import (
     UpdatePolicyRequest,
     AddOrUpdatePolicyConnectionsRequest,
 )
-
-# Re-export event models from management for convenience
-from aidefense.management.models.event import (
-    # Event Enums
-    EventSortBy,
-    # Event Models
-    ViolationMetadata,
-    MatchFeedback,
-    EventRuleMatch,
-    EventRuleMatches,
-    Event,
-    Events,
-    EventMessage,
-    EventMessages,
-    # Event Request Models
-    ListEventsRequest,
-)
-

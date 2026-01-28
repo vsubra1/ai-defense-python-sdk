@@ -253,7 +253,6 @@ print(resp.task_id)
 - `mcpscan/mcp_scan.py` — MCPScanClient for scanning MCP servers
 - `mcpscan/resource_connections.py` — ResourceConnectionClient for managing resource connections
 - `mcpscan/policies.py` — MCPPolicyClient for managing MCP Gateway policies
-- `mcpscan/events.py` — MCPEventClient for retrieving MCP-related events
 - `mcpscan/models.py` — Data models for MCP server scanning, connections, and events
 
 ### Model Scanning API
