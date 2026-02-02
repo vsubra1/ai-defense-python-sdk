@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 
 from aidefense.runtime.agentsec.decision import Decision
-from aidefense.runtime.agentsec.exceptions import SecurityPolicyError
+from aidefense.runtime.agentsec.exceptions import (
+    SecurityPolicyError,
+    InspectionTimeoutError,
+    InspectionNetworkError,
+    AgentsecError,
+)
 from aidefense.runtime.agentsec.inspectors.api_llm import LLMInspector
 
 
@@ -313,7 +318,7 @@ class TestLLMInspectorErrorHandling:
 
     @pytest.mark.asyncio
     async def test_async_fail_open_false_raises(self):
-        """Test async fail_open=False raises SecurityPolicyError."""
+        """Test async fail_open=False raises InspectionNetworkError for network errors."""
         inspector = LLMInspector(
             api_key="test-key",
             endpoint="http://test.example.com",
@@ -327,7 +332,8 @@ class TestLLMInspectorErrorHandling:
         mock_client.__aexit__.return_value = None
         
         with patch("httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(SecurityPolicyError):
+            # Should raise InspectionNetworkError (a typed AgentsecError)
+            with pytest.raises(InspectionNetworkError):
                 await inspector.ainspect_conversation(
                     messages=[{"role": "user", "content": "test"}],
                     metadata={},

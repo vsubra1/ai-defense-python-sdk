@@ -19,10 +19,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Load environment variables
-EXAMPLES_DIR="$(cd "$ROOT_DIR/.." && pwd)"
-if [ -f "$EXAMPLES_DIR/.env" ]; then
+# Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
+AGENTSEC_EXAMPLES_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
+if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
     set -a
-    source "$EXAMPLES_DIR/.env"
+    source "$AGENTSEC_EXAMPLES_DIR/.env"
     set +a
 fi
 
@@ -48,12 +49,31 @@ FUNCTION_KEY=$(az functionapp keys list \
 # Function URL
 FUNCTION_URL="https://${AZURE_FUNCTION_APP_NAME}.azurewebsites.net/api/invoke?code=$FUNCTION_KEY"
 
-# Invoke function
-RESPONSE=$(curl -s -X POST "$FUNCTION_URL" \
+# Invoke function with HTTP status code checking
+RESPONSE_FILE=$(mktemp)
+HTTP_CODE=$(curl -s -o "$RESPONSE_FILE" -w "%{http_code}" -X POST "$FUNCTION_URL" \
     -H "Content-Type: application/json" \
     -d "{\"prompt\": \"$PROMPT\"}")
 
+RESPONSE=$(cat "$RESPONSE_FILE")
+rm -f "$RESPONSE_FILE"
+
 echo "=============================================="
-echo "Response:"
+echo "Response (HTTP $HTTP_CODE):"
 echo "=============================================="
-echo "$RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$RESPONSE"
+
+if [ "$HTTP_CODE" != "200" ]; then
+    echo "ERROR: HTTP status code $HTTP_CODE"
+    echo ""
+fi
+
+if [ -z "$RESPONSE" ]; then
+    echo "(empty response)"
+else
+    echo "$RESPONSE" | python3 -m json.tool 2>/dev/null || echo "$RESPONSE"
+fi
+
+# Exit with error if HTTP status is not 200
+if [ "$HTTP_CODE" != "200" ]; then
+    exit 1
+fi

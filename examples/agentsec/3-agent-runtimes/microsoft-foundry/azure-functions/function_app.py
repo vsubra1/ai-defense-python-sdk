@@ -20,7 +20,7 @@ Usage:
     # Test MCP tool
     ./scripts/invoke.sh "Fetch https://example.com and summarize it"
 
-Note: agentsec protection is configured in _shared/agent_factory.py
+Note: agentsec protection is initialized at import time when _shared is imported.
 """
 
 import json
@@ -34,9 +34,9 @@ FUNCTION_ROOT = os.path.dirname(__file__)
 if FUNCTION_ROOT not in sys.path:
     sys.path.insert(0, FUNCTION_ROOT)
 
-# Import the protected agent (agentsec.protect() is called on import)
+# Import the agent factory (protection is initialized at import time)
 from _shared import invoke_agent
-from aidefense.runtime import agentsec
+from aidefense.runtime.agentsec import get_patched_clients
 
 # Create the Azure Functions app
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
@@ -56,19 +56,11 @@ def invoke(req: func.HttpRequest) -> func.HttpResponse:
         {"result": "The payments service is healthy..."}
     """
     logging.info("[function] Received invoke request")
-    logging.info(f"[agentsec] Patched clients: {agentsec.get_patched_clients()}")
+    logging.info(f"[agentsec] Patched clients: {get_patched_clients()}")
     
     try:
         # Parse request body
         req_body = req.get_json()
-        
-        if not req_body:
-            return func.HttpResponse(
-                json.dumps({"error": "Request body is required"}),
-                mimetype="application/json",
-                status_code=400
-            )
-        
         prompt = req_body.get("prompt", req_body.get("message", req_body.get("input")))
         
         if not prompt:
@@ -113,7 +105,7 @@ def health(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(
         json.dumps({
             "status": "healthy",
-            "patched_clients": agentsec.get_patched_clients()
+            "patched_clients": get_patched_clients()
         }),
         mimetype="application/json",
         status_code=200

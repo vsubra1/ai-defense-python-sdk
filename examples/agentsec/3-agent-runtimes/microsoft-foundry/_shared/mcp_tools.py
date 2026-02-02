@@ -48,7 +48,9 @@ def _get_mcp_config():
 def _sync_call_mcp_tool(tool_name: str, arguments: dict) -> str:
     """Synchronously call an MCP tool by creating a fresh MCP connection.
     
-    This function uses asyncio.run() for cleaner event loop management.
+    This function handles event loop management carefully to work in various
+    contexts (Azure Functions, Azure ML, etc.) where there may or may not
+    be an existing event loop.
     
     The actual MCP call (session.call_tool) is intercepted by agentsec's
     MCP patcher for AI Defense inspection.
@@ -77,19 +79,25 @@ def _sync_call_mcp_tool(tool_name: str, arguments: dict) -> str:
                 result = await session.call_tool(tool_name, arguments)
                 return result.content[0].text if result.content else "No answer"
     
-    # Use asyncio.run() for cleaner event loop management
-    # Note: nest_asyncio should be applied in the main module if nested loops are needed
+    # Handle event loop management carefully for different execution contexts
+    # Azure Functions and Azure ML may have existing event loops
     try:
+        # Check if there's already a running loop (e.g., in async context)
+        loop = asyncio.get_running_loop()
+        # We're in an async context - use nest_asyncio to allow nested loops
+        try:
+            import nest_asyncio
+            nest_asyncio.apply()
+        except ImportError:
+            pass
+        # Create a new loop in a thread to avoid blocking the running loop
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, _async_call())
+            return future.result(timeout=mcp_timeout + 60)
+    except RuntimeError:
+        # No running loop - we can use asyncio.run() directly
         return asyncio.run(_async_call())
-    except RuntimeError as e:
-        # Fall back to creating a new event loop if we're already in an async context
-        if "cannot be called from a running event loop" in str(e):
-            loop = asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(_async_call())
-            finally:
-                loop.close()
-        raise
 
 
 @tool
@@ -108,7 +116,7 @@ def fetch_url(url: str) -> str:
     Returns:
         The text content of the URL
     """
-    mcp_url, _ = _get_mcp_config()
+    mcp_url, mcp_timeout = _get_mcp_config()
     logger.info(f"fetch_url called: url={url}")
     
     if mcp_url is None:
@@ -127,8 +135,8 @@ def fetch_url(url: str) -> str:
         logger.info(f"Got response ({len(response_text)} chars) in {elapsed:.1f}s")
         return response_text
     except asyncio.TimeoutError:
-        logger.error(f"MCP call timed out after {_mcp_timeout}s")
-        return f"Error: MCP call timed out after {_mcp_timeout} seconds"
+        logger.error(f"MCP call timed out after {mcp_timeout}s")
+        return f"Error: MCP call timed out after {mcp_timeout} seconds"
     except ConnectionError as e:
         logger.error(f"MCP connection error: {e}")
         return f"Error: Could not connect to MCP server: {e}"

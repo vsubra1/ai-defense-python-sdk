@@ -54,10 +54,10 @@ class TestExampleStructure:
         """Test that app files exist for each deployment mode."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         
-        # Check Flask apps
+        # Check main.py for Azure ML managed endpoint deployments
         for deploy_mode in ["foundry-agent-app", "foundry-container"]:
-            app_file = os.path.join(project_dir, deploy_mode, "app.py")
-            assert os.path.isfile(app_file), f"{deploy_mode}/app.py should exist"
+            main_file = os.path.join(project_dir, deploy_mode, "main.py")
+            assert os.path.isfile(main_file), f"{deploy_mode}/main.py should exist"
         
         # Check Azure Functions app
         function_app = os.path.join(project_dir, "azure-functions", "function_app.py")
@@ -168,25 +168,23 @@ class TestAgentFactoryStructure:
     """Test the agent factory module structure (LangChain-based agent with Azure OpenAI)."""
 
     def test_agent_factory_imports_agentsec_first(self):
-        """Test that agent_factory.py imports agentsec before AI libraries."""
+        """Test that agent_factory.py imports agentsec (via aidefense) before AI libraries."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         agent_factory_path = os.path.join(project_dir, "_shared", "agent_factory.py")
         
         with open(agent_factory_path, "r") as f:
             content = f.read()
         
-        # Find positions of key imports (check both import patterns)
-        agentsec_pos = content.find("from aidefense.runtime import agentsec")
-        if agentsec_pos == -1:
-            agentsec_pos = content.find("import agentsec")
+        # Find positions of key imports (using aidefense.runtime import agentsec)
+        aidefense_pos = content.find("from aidefense.runtime import agentsec")
         protect_pos = content.find("agentsec.protect(")
         langchain_pos = content.find("from langchain_openai")
         
-        assert agentsec_pos != -1, "agentsec import should be present (either 'import agentsec' or 'from aidefense.runtime import agentsec')"
-        assert protect_pos != -1, "agentsec.protect() should be present"
+        assert aidefense_pos != -1, "aidefense.runtime import should be present"
+        assert protect_pos != -1, "agentsec.protect() call should be present"
         assert langchain_pos != -1, "LangChain import should be present"
         
-        # Verify order: agentsec.protect() must come before any AI library import
+        # Verify order: protect() must come before any AI library import
         assert protect_pos < langchain_pos, "agentsec.protect() must be called before importing LangChain"
 
     def test_agent_factory_uses_azure_chat_openai(self):
@@ -284,28 +282,29 @@ class TestAppEndpoints:
     """Test the Flask app endpoints structure."""
 
     def test_foundry_agent_app_has_required_endpoints(self):
-        """Test that foundry-agent-app has required endpoints."""
+        """Test that foundry-agent-app has required Azure ML interface (init/run)."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        app_path = os.path.join(project_dir, "foundry-agent-app", "app.py")
+        # For Azure ML managed endpoints, we use main.py with init()/run() pattern
+        main_path = os.path.join(project_dir, "foundry-agent-app", "main.py")
         
-        with open(app_path, "r") as f:
+        with open(main_path, "r") as f:
             content = f.read()
         
-        assert "/health" in content, "Should have /health endpoint"
-        assert "/invoke" in content, "Should have /invoke endpoint"
-        assert "/score" in content, "Should have /score endpoint for Azure ML compatibility"
+        assert "def init():" in content, "Should have init() function for Azure ML"
+        assert "def run(" in content, "Should have run() function for Azure ML"
+        assert "invoke_agent" in content, "Should use invoke_agent from agent_factory"
 
-    def test_foundry_container_app_has_required_endpoints(self):
-        """Test that foundry-container has required endpoints."""
+    def test_foundry_container_app_has_required_interface(self):
+        """Test that foundry-container has required Azure ML interface (init/run)."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        app_path = os.path.join(project_dir, "foundry-container", "app.py")
+        main_path = os.path.join(project_dir, "foundry-container", "main.py")
         
-        with open(app_path, "r") as f:
+        with open(main_path, "r") as f:
             content = f.read()
         
-        assert "/health" in content, "Should have /health endpoint"
-        assert "/invoke" in content, "Should have /invoke endpoint"
-        assert "/score" in content, "Should have /score endpoint for Azure ML compatibility"
+        assert "def init():" in content, "Should have init() function for Azure ML"
+        assert "def run(" in content, "Should have run() function for Azure ML"
+        assert "invoke_agent" in content, "Should use invoke_agent from agent_factory"
 
     def test_azure_functions_has_required_routes(self):
         """Test that azure-functions has required routes."""
@@ -318,17 +317,17 @@ class TestAppEndpoints:
         assert 'route="invoke"' in content or "route=invoke" in content, "Should have invoke route"
         assert 'route="health"' in content or "route=health" in content, "Should have health route"
 
-    def test_apps_import_agent_factory(self):
-        """Test that app files import from agent_factory."""
+    def test_main_files_import_agent_factory(self):
+        """Test that main.py files import from agent_factory."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         
         for deploy_mode in ["foundry-agent-app", "foundry-container"]:
-            app_path = os.path.join(project_dir, deploy_mode, "app.py")
+            main_path = os.path.join(project_dir, deploy_mode, "main.py")
             
-            with open(app_path, "r") as f:
+            with open(main_path, "r") as f:
                 content = f.read()
             
-            assert "invoke_agent" in content, f"{deploy_mode}/app.py should use invoke_agent"
+            assert "invoke_agent" in content, f"{deploy_mode}/main.py should use invoke_agent"
 
     def test_azure_functions_imports_agent_factory(self):
         """Test that Azure Functions imports from agent_factory."""
@@ -354,27 +353,31 @@ class TestDockerfile:
         
         assert "agentsec" in content.lower(), "Dockerfile should reference agentsec"
         assert "COPY" in content, "Dockerfile should copy files"
-        assert "8080" in content, "Dockerfile should expose port 8080"
+        # Azure ML managed endpoints use port 5001 externally (31311 internally)
+        assert "5001" in content, "Dockerfile should expose port 5001 for Azure ML"
 
-    def test_dockerfile_uses_python_311(self):
-        """Test that Dockerfile uses Python 3.11."""
+    def test_dockerfile_uses_python_310(self):
+        """Test that Dockerfile uses Python 3.10."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         dockerfile = os.path.join(project_dir, "foundry-container", "Dockerfile")
         
         with open(dockerfile, "r") as f:
             content = f.read()
         
-        assert "python:3.11" in content, "Dockerfile should use Python 3.11"
+        # Python 3.10 is used for broader compatibility with Azure ML
+        assert "python:3.10" in content, "Dockerfile should use Python 3.10"
 
-    def test_dockerfile_has_healthcheck(self):
-        """Test that Dockerfile has health check."""
+    def test_dockerfile_has_main_py_for_azure_ml(self):
+        """Test that Dockerfile copies main.py for Azure ML inference server."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         dockerfile = os.path.join(project_dir, "foundry-container", "Dockerfile")
         
         with open(dockerfile, "r") as f:
             content = f.read()
         
-        assert "HEALTHCHECK" in content, "Dockerfile should have HEALTHCHECK"
+        # Azure ML managed endpoints require main.py with init()/run() at /var/azureml-app
+        assert "main.py" in content, "Dockerfile should copy main.py"
+        assert "/var/azureml-app" in content, "Dockerfile should use /var/azureml-app for Azure ML"
 
 
 class TestAzureFunctionsConfig:

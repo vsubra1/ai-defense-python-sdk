@@ -326,7 +326,10 @@ class StreamingInspectionWrapper:
             if hasattr(chunk, "choices") and chunk.choices:
                 delta = chunk.choices[0].delta
                 if hasattr(delta, "content") and delta.content:
-                    self._buffer += delta.content
+                    # Limit buffer size during accumulation to prevent memory issues
+                    if len(self._buffer) < MAX_STREAMING_BUFFER_SIZE:
+                        remaining_capacity = MAX_STREAMING_BUFFER_SIZE - len(self._buffer)
+                        self._buffer += delta.content[:remaining_capacity]
                     self._chunk_count += 1
                     
                     # Incremental inspection
@@ -410,7 +413,10 @@ class AsyncStreamingInspectionWrapper:
             if hasattr(chunk, "choices") and chunk.choices:
                 delta = chunk.choices[0].delta
                 if hasattr(delta, "content") and delta.content:
-                    self._buffer += delta.content
+                    # Limit buffer size during accumulation to prevent memory issues
+                    if len(self._buffer) < MAX_STREAMING_BUFFER_SIZE:
+                        remaining_capacity = MAX_STREAMING_BUFFER_SIZE - len(self._buffer)
+                        self._buffer += delta.content[:remaining_capacity]
                     self._chunk_count += 1
                     
                     if self._chunk_count % self._inspect_interval == 0:

@@ -208,18 +208,6 @@ def _is_agentcore_operation(operation_name: str, instance) -> bool:
     return operation_name in AGENTCORE_OPERATIONS and _is_agentcore_client(instance)
 
 
-def _should_use_agentcore_gateway() -> bool:
-    """Check if we should use gateway mode for AgentCore (gateway mode enabled, configured, and not skipped)."""
-    from .._context import is_llm_skip_active
-    if is_llm_skip_active():
-        return False
-    if not _is_gateway_mode():
-        return False
-    # Check if AgentCore gateway is configured (only URL needed - uses AWS Sig V4)
-    gateway_url = _state.get_provider_gateway_url("agentcore")
-    return bool(gateway_url)
-
-
 def _parse_agentcore_payload(payload: bytes) -> List[Dict[str, Any]]:
     """
     Parse AgentCore request payload into standard message format.
@@ -359,7 +347,7 @@ def _handle_agentcore_gateway_call(operation_name: str, api_params: Dict, instan
     Handle AgentCore call via AI Defense Gateway with AWS Signature V4 authentication.
     
     Sends the request to the AI Defense Gateway, which proxies to AgentCore.
-    Uses AWS Sig V4 for authentication (no separate API key needed).
+    Uses the Bedrock gateway URL with AWS Sig V4 authentication.
     
     Args:
         operation_name: AgentCore operation name (InvokeAgentRuntime)
@@ -371,13 +359,14 @@ def _handle_agentcore_gateway_call(operation_name: str, api_params: Dict, instan
     """
     import httpx
     
-    gateway_url = _state.get_provider_gateway_url("agentcore")
+    # Use Bedrock gateway URL for AgentCore operations
+    gateway_url = _state.get_provider_gateway_url("bedrock")
     
     if not gateway_url:
-        logger.warning("Gateway mode enabled but AgentCore gateway not configured")
+        logger.warning("Gateway mode enabled but Bedrock gateway not configured")
         raise SecurityPolicyError(
-            Decision.block(reasons=["AgentCore gateway not configured"]),
-            "Gateway mode enabled but AGENTSEC_AGENTCORE_GATEWAY_URL not set"
+            Decision.block(reasons=["Bedrock gateway not configured"]),
+            "Gateway mode enabled but AGENTSEC_BEDROCK_GATEWAY_URL not set"
         )
     
     agent_runtime_arn = api_params.get("agentRuntimeArn", "")
@@ -503,7 +492,7 @@ def _handle_agentcore_api_mode(operation_name: str, api_params: Dict, wrapped, a
     
     metadata = get_inspection_context().metadata
     metadata["agent_runtime_arn"] = agent_runtime_arn
-    metadata["provider"] = "agentcore"
+    metadata["provider"] = "bedrock"  # AgentCore uses Bedrock as the underlying provider
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
@@ -1057,6 +1046,7 @@ def _handle_agentcore_call(wrapped, instance, args, kwargs, operation_name: str,
     Handle AgentCore operations (InvokeAgentRuntime).
     
     Routes to either gateway mode or API mode based on configuration.
+    Uses Bedrock gateway configuration for gateway mode.
     
     Args:
         wrapped: Original wrapped function
@@ -1073,8 +1063,8 @@ def _handle_agentcore_call(wrapped, instance, args, kwargs, operation_name: str,
         logger.debug(f"[PATCHED CALL] AgentCore.{operation_name} - inspection skipped (mode=off or already done)")
         return wrapped(*args, **kwargs)
     
-    # Gateway mode: route through AI Defense Gateway with AWS Sig V4
-    if _should_use_agentcore_gateway():
+    # Gateway mode: route through AI Defense Gateway (uses Bedrock gateway config)
+    if _should_use_gateway():
         logger.debug(f"[PATCHED CALL] AgentCore.{operation_name} - Gateway mode - routing to AI Defense Gateway")
         return _handle_agentcore_gateway_call(operation_name, api_params, instance)
     

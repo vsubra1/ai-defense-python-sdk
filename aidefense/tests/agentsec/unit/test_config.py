@@ -9,6 +9,10 @@ from aidefense.runtime.agentsec.config import (
     load_env_config,
     _parse_rules_env,
     _parse_integration_mode_env,
+    _parse_int_env,
+    _parse_float_env,
+    _parse_list_env,
+    _parse_int_list_env,
     VALID_INTEGRATION_MODES,
 )
 
@@ -397,3 +401,186 @@ class TestGatewayModeConfig:
             assert config["mcp_gateway_mode"] == "off"
             assert config["llm_gateway_fail_open"] is True
             assert config["mcp_gateway_fail_open"] is False
+
+
+class TestAdvancedConfigParsing:
+    """Tests for new advanced configuration parsing functions."""
+
+    def test_parse_int_env_valid(self):
+        """Test parsing valid integer from env."""
+        assert _parse_int_env("100") == 100
+        assert _parse_int_env("1") == 1
+        assert _parse_int_env("0") == 0
+        assert _parse_int_env("-5") == -5
+
+    def test_parse_int_env_with_whitespace(self):
+        """Test parsing integer with whitespace."""
+        assert _parse_int_env("  100  ") == 100
+        assert _parse_int_env("\t50\n") == 50
+
+    def test_parse_int_env_invalid(self):
+        """Test parsing invalid integer returns default."""
+        assert _parse_int_env("abc") is None
+        assert _parse_int_env("abc", default=10) == 10
+        assert _parse_int_env("12.5") is None  # Float not valid
+        assert _parse_int_env("12.5", default=20) == 20
+
+    def test_parse_int_env_empty(self):
+        """Test parsing empty/None returns default."""
+        assert _parse_int_env(None) is None
+        assert _parse_int_env("") is None
+        assert _parse_int_env("  ") is None
+        assert _parse_int_env(None, default=5) == 5
+
+    def test_parse_float_env_valid(self):
+        """Test parsing valid float from env."""
+        assert _parse_float_env("1.5") == 1.5
+        assert _parse_float_env("100") == 100.0
+        assert _parse_float_env("0.001") == 0.001
+        assert _parse_float_env("-2.5") == -2.5
+
+    def test_parse_float_env_with_whitespace(self):
+        """Test parsing float with whitespace."""
+        assert _parse_float_env("  1.5  ") == 1.5
+
+    def test_parse_float_env_invalid(self):
+        """Test parsing invalid float returns default."""
+        assert _parse_float_env("abc") is None
+        assert _parse_float_env("abc", default=1.0) == 1.0
+
+    def test_parse_float_env_empty(self):
+        """Test parsing empty/None returns default."""
+        assert _parse_float_env(None) is None
+        assert _parse_float_env("") is None
+        assert _parse_float_env(None, default=2.0) == 2.0
+
+    def test_parse_list_env_valid(self):
+        """Test parsing comma-separated list from env."""
+        assert _parse_list_env("EMAIL,PHONE,SSN") == ["EMAIL", "PHONE", "SSN"]
+        assert _parse_list_env("EMAIL") == ["EMAIL"]
+
+    def test_parse_list_env_with_whitespace(self):
+        """Test parsing list with whitespace."""
+        assert _parse_list_env("  EMAIL , PHONE , SSN  ") == ["EMAIL", "PHONE", "SSN"]
+
+    def test_parse_list_env_empty(self):
+        """Test parsing empty list returns None."""
+        assert _parse_list_env(None) is None
+        assert _parse_list_env("") is None
+        assert _parse_list_env("  ") is None
+        assert _parse_list_env(",,,") is None
+
+    def test_parse_int_list_env_valid(self):
+        """Test parsing comma-separated integer list from env."""
+        assert _parse_int_list_env("500,502,503,504") == [500, 502, 503, 504]
+        assert _parse_int_list_env("500") == [500]
+
+    def test_parse_int_list_env_with_whitespace(self):
+        """Test parsing integer list with whitespace."""
+        assert _parse_int_list_env("  500 , 502 , 503  ") == [500, 502, 503]
+
+    def test_parse_int_list_env_skips_invalid(self):
+        """Test parsing integer list skips invalid values."""
+        assert _parse_int_list_env("500,abc,503") == [500, 503]
+        assert _parse_int_list_env("500,,503") == [500, 503]
+
+    def test_parse_int_list_env_empty(self):
+        """Test parsing empty integer list returns None."""
+        assert _parse_int_list_env(None) is None
+        assert _parse_int_list_env("") is None
+        assert _parse_int_list_env("  ") is None
+
+
+class TestAdvancedEnvConfig:
+    """Tests for advanced environment variable configuration."""
+
+    def test_load_env_config_entity_types(self):
+        """Test loading entity types from env."""
+        env_vars = {
+            "AGENTSEC_LLM_ENTITY_TYPES": "EMAIL,PHONE_NUMBER,SSN",
+        }
+        
+        with patch.dict(os.environ, env_vars, clear=False):
+            config = load_env_config()
+            assert config["llm_entity_types"] == ["EMAIL", "PHONE_NUMBER", "SSN"]
+
+    def test_load_env_config_retry_settings(self):
+        """Test loading retry configuration from env."""
+        env_vars = {
+            "AGENTSEC_RETRY_TOTAL": "3",
+            "AGENTSEC_RETRY_BACKOFF_FACTOR": "0.5",
+            "AGENTSEC_RETRY_STATUS_FORCELIST": "500,502,503",
+        }
+        
+        with patch.dict(os.environ, env_vars, clear=False):
+            config = load_env_config()
+            assert config["retry_total"] == 3
+            assert config["retry_backoff_factor"] == 0.5
+            assert config["retry_status_forcelist"] == [500, 502, 503]
+
+    def test_load_env_config_pool_settings(self):
+        """Test loading pool configuration from env."""
+        env_vars = {
+            "AGENTSEC_POOL_MAX_CONNECTIONS": "200",
+            "AGENTSEC_POOL_MAX_KEEPALIVE": "50",
+        }
+        
+        with patch.dict(os.environ, env_vars, clear=False):
+            config = load_env_config()
+            assert config["pool_max_connections"] == 200
+            assert config["pool_max_keepalive"] == 50
+
+    def test_load_env_config_timeout(self):
+        """Test loading timeout from env."""
+        env_vars = {
+            "AGENTSEC_TIMEOUT": "5",
+        }
+        
+        with patch.dict(os.environ, env_vars, clear=False):
+            config = load_env_config()
+            assert config["timeout"] == 5
+
+    def test_load_env_config_metadata_defaults(self):
+        """Test loading metadata defaults from env."""
+        env_vars = {
+            "AGENTSEC_USER": "test-user",
+            "AGENTSEC_SRC_APP": "test-app",
+            "AGENTSEC_CLIENT_TRANSACTION_ID": "txn-12345",
+        }
+        
+        with patch.dict(os.environ, env_vars, clear=False):
+            config = load_env_config()
+            assert config["user"] == "test-user"
+            assert config["src_app"] == "test-app"
+            assert config["client_transaction_id"] == "txn-12345"
+
+    def test_load_env_config_advanced_unset(self):
+        """Test advanced config returns None when not set."""
+        env_to_clear = [
+            "AGENTSEC_LLM_ENTITY_TYPES",
+            "AGENTSEC_RETRY_TOTAL",
+            "AGENTSEC_RETRY_BACKOFF_FACTOR",
+            "AGENTSEC_RETRY_STATUS_FORCELIST",
+            "AGENTSEC_POOL_MAX_CONNECTIONS",
+            "AGENTSEC_POOL_MAX_KEEPALIVE",
+            "AGENTSEC_TIMEOUT",
+            "AGENTSEC_USER",
+            "AGENTSEC_SRC_APP",
+            "AGENTSEC_CLIENT_TRANSACTION_ID",
+        ]
+        
+        with patch.dict(os.environ, {}, clear=False):
+            for var in env_to_clear:
+                os.environ.pop(var, None)
+            
+            config = load_env_config()
+            assert config["llm_entity_types"] is None
+            assert config["retry_total"] is None
+            assert config["retry_backoff_factor"] is None
+            assert config["retry_status_forcelist"] is None
+            assert config["pool_max_connections"] is None
+            assert config["pool_max_keepalive"] is None
+            assert config["timeout"] is None
+            assert config["user"] is None
+            assert config["src_app"] is None
+            assert config["client_transaction_id"] is None

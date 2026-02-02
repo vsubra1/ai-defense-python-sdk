@@ -8,7 +8,7 @@ These examples show three deployment modes for Azure AI Foundry, all protected b
 
 | Deployment Mode | Description | Use Case |
 |-----------------|-------------|----------|
-| **Foundry Agent App** | Flask app deployed as managed online endpoint | Production web services |
+| **Foundry Agent App** | Azure ML managed online endpoint | Production web services |
 | **Azure Functions** | Serverless function deployment | Event-driven, cost-efficient |
 | **Foundry Container** | Custom container deployment | Full control, complex dependencies |
 
@@ -76,11 +76,14 @@ agentsec supports two integration modes with Cisco AI Defense:
    pip install poetry
    ```
 
-5. **Environment variables** configured in `examples/.env`:
+5. **Environment variables** configured in `examples/agentsec/.env`:
    ```bash
    # Azure OpenAI (for API mode - direct calls)
    AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
    AZURE_OPENAI_API_KEY=your-api-key
+   # IMPORTANT: Deployment name must match your Azure OpenAI resource deployment
+   AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o
+   AZURE_OPENAI_API_VERSION=2024-08-01-preview
    
    # Azure AI Foundry Deployment
    AZURE_SUBSCRIPTION_ID=your-subscription-id
@@ -101,7 +104,7 @@ agentsec supports two integration modes with Cisco AI Defense:
 ### 1. Install Dependencies
 
 ```bash
-cd examples/3-agent-runtimes/microsoft-foundry
+cd examples/agentsec/3-agent-runtimes/microsoft-foundry
 poetry install
 ```
 
@@ -155,22 +158,33 @@ microsoft-foundry/
 │   ├── agent_factory.py          # LangChain agent + agentsec
 │   ├── tools.py                  # Demo tools
 │   └── mcp_tools.py              # MCP tool integration
-├── foundry-agent-app/            # Managed online endpoint
-│   ├── app.py
+├── agentsec/                     # Vendored SDK (generated at deploy time, git-ignored)
+├── aidefense/                    # Vendored SDK (generated at deploy time, git-ignored)
+├── foundry-agent-app/            # Azure ML managed online endpoint
+│   ├── main.py                   # Azure ML inference script (init/run)
+│   ├── Dockerfile
+│   ├── deployment.yaml           # (generated at deploy time, git-ignored)
+│   ├── endpoint.yaml             # (generated at deploy time, git-ignored)
+│   ├── model/                    # (generated at deploy time, git-ignored)
 │   ├── requirements.txt
 │   └── scripts/
 │       ├── deploy.sh
 │       └── invoke.sh
 ├── azure-functions/              # Serverless functions
+│   ├── _shared/                  # (generated at deploy time, git-ignored)
+│   ├── agentsec/                 # (generated at deploy time, git-ignored)
 │   ├── function_app.py
 │   ├── host.json
 │   ├── requirements.txt
 │   └── scripts/
 │       ├── deploy.sh
 │       └── invoke.sh
-├── foundry-container/            # Container deployment
-│   ├── app.py
+├── foundry-container/            # Custom container deployment
+│   ├── main.py                   # Azure ML inference script (init/run)
 │   ├── Dockerfile
+│   ├── deployment.yaml           # (generated at deploy time, git-ignored)
+│   ├── endpoint.yaml             # (generated at deploy time, git-ignored)
+│   ├── model/                    # (generated at deploy time, git-ignored)
 │   ├── requirements.txt
 │   └── scripts/
 │       ├── deploy.sh
@@ -179,7 +193,7 @@ microsoft-foundry/
 │   ├── integration/              # Integration tests
 │   │   ├── test-all-modes.sh
 │   │   └── test_mcp_protection.py
-│   └── unit/                     # Unit tests (49 tests)
+│   └── unit/                     # Unit tests
 │       └── test_foundry_example.py
 ├── pyproject.toml
 └── README.md
@@ -236,6 +250,8 @@ Deployment tests require additional Azure credentials:
 
 ### Azure OpenAI Connection Issues
 - Verify `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` are set correctly
+- **IMPORTANT**: `AZURE_OPENAI_DEPLOYMENT_NAME` must match your actual Azure OpenAI deployment name (not the model name like "gpt-4o")
+  - To find your deployment name: Azure Portal → Azure OpenAI → Your Resource → Model Deployments
 - Check that your Azure OpenAI deployment is active
 - Ensure your IP is allowed in the Azure OpenAI firewall settings
 
@@ -243,6 +259,13 @@ Deployment tests require additional Azure credentials:
 - Verify Azure CLI is logged in: `az account show`
 - Check resource group exists: `az group show --name $AZURE_RESOURCE_GROUP`
 - Ensure you have Contributor role on the resource group
+- Check VM quota for the instance type: `az vm list-usage --location <region>`
+- For container deployments, ensure ACR is accessible and image is pushed
+
+### Container Startup Issues
+- Test locally first: `./scripts/test-docker-local.sh agent-app`
+- Check container logs: `az ml online-deployment get-logs --name default --endpoint-name <endpoint>`
+- Azure ML inference server uses `/` for liveness checks and `/score` for scoring
 
 ### agentsec Not Patching
 - Ensure `agentsec.protect()` is called BEFORE importing `langchain_openai`

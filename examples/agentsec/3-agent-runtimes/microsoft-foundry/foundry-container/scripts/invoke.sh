@@ -20,10 +20,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Load environment variables
-EXAMPLES_DIR="$(cd "$ROOT_DIR/.." && pwd)"
-if [ -f "$EXAMPLES_DIR/.env" ]; then
+# Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
+AGENTSEC_EXAMPLES_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
+if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
     set -a
-    source "$EXAMPLES_DIR/.env"
+    source "$AGENTSEC_EXAMPLES_DIR/.env"
     set +a
 fi
 

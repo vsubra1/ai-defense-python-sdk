@@ -102,6 +102,53 @@ def merge_metadata(additional: Dict[str, Any]) -> None:
     _inspection_metadata.set({**current, **additional})
 
 
+def set_metadata(
+    user: Optional[str] = None,
+    src_app: Optional[str] = None,
+    client_transaction_id: Optional[str] = None,
+    **extra: Any,
+) -> None:
+    """
+    Set metadata for the current inspection context.
+    
+    This is a convenience function that sets common metadata fields.
+    The metadata will be included in inspection API requests.
+    
+    Args:
+        user: User identifier (e.g., user ID, username)
+        src_app: Source application name
+        client_transaction_id: Client-provided transaction ID for correlation
+        **extra: Additional metadata key-value pairs
+    
+    Example:
+        import agentsec
+        
+        agentsec.set_metadata(
+            user="user-123",
+            src_app="my-agent",
+            client_transaction_id=str(uuid.uuid4()),
+        )
+        
+        # Now make LLM calls - metadata will be included
+        response = client.chat.completions.create(...)
+    """
+    metadata: Dict[str, Any] = {}
+    
+    if user is not None:
+        metadata["user"] = user
+    if src_app is not None:
+        metadata["src_app"] = src_app
+    if client_transaction_id is not None:
+        metadata["client_transaction_id"] = client_transaction_id
+    
+    # Add any extra metadata
+    metadata.update(extra)
+    
+    # Merge into current context
+    if metadata:
+        merge_metadata(metadata)
+
+
 # =============================================================================
 # Skip Inspection API
 # =============================================================================

@@ -31,8 +31,24 @@ class Decision:
         reasons: List of reasons explaining the decision
         sanitized_content: Modified content if action is sanitize
         raw_response: The raw response from the inspection API (if any)
+        severity: Severity level of the violation (e.g., "low", "medium", "high", "critical")
+        classifications: List of violation classifications (e.g., ["pii", "prompt_injection"])
+        rules: List of rules that were triggered, with details
+        explanation: Human-readable explanation of the decision
+        event_id: Unique identifier for this inspection event (for correlation/audit)
     """
-    __slots__ = ("action", "reasons", "sanitized_content", "raw_response")
+    __slots__ = (
+        "action",
+        "reasons",
+        "sanitized_content",
+        "raw_response",
+        # New fields for rich result processing
+        "severity",
+        "classifications",
+        "rules",
+        "explanation",
+        "event_id",
+    )
     
     def __init__(
         self,
@@ -40,11 +56,23 @@ class Decision:
         reasons: Optional[List[str]] = None,
         sanitized_content: Optional[str] = None,
         raw_response: Any = None,
+        # New fields - all optional with None defaults for backward compatibility
+        severity: Optional[str] = None,
+        classifications: Optional[List[str]] = None,
+        rules: Optional[List[Any]] = None,
+        explanation: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> None:
         self.action = action
         self.reasons = reasons or []
         self.sanitized_content = sanitized_content
         self.raw_response = raw_response
+        # New fields
+        self.severity = severity
+        self.classifications = classifications
+        self.rules = rules
+        self.explanation = explanation
+        self.event_id = event_id
     
     def allows(self) -> bool:
         """
@@ -56,11 +84,38 @@ class Decision:
         """
         return self.action != "block"
     
+    @property
+    def is_safe(self) -> bool:
+        """
+        Check if this decision indicates the content is safe.
+        
+        This is an alias for allows() that provides compatibility
+        with the InspectResponse interface from ChatInspectionClient.
+        
+        Returns:
+            True if action is allow, sanitize, or monitor_only.
+            False if action is block.
+        """
+        return self.action != "block"
+    
     def __repr__(self) -> str:
-        return (
-            f"Decision(action={self.action!r}, reasons={self.reasons!r}, "
-            f"sanitized_content={self.sanitized_content!r})"
-        )
+        # Include new fields only if they have values (to keep output concise)
+        parts = [
+            f"action={self.action!r}",
+            f"reasons={self.reasons!r}",
+            f"sanitized_content={self.sanitized_content!r}",
+        ]
+        if self.severity is not None:
+            parts.append(f"severity={self.severity!r}")
+        if self.classifications is not None:
+            parts.append(f"classifications={self.classifications!r}")
+        if self.rules is not None:
+            parts.append(f"rules={self.rules!r}")
+        if self.explanation is not None:
+            parts.append(f"explanation={self.explanation!r}")
+        if self.event_id is not None:
+            parts.append(f"event_id={self.event_id!r}")
+        return f"Decision({', '.join(parts)})"
     
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Decision):
@@ -69,6 +124,12 @@ class Decision:
             self.action == other.action
             and self.reasons == other.reasons
             and self.sanitized_content == other.sanitized_content
+            # Include new fields in equality check
+            and self.severity == other.severity
+            and self.classifications == other.classifications
+            and self.rules == other.rules
+            and self.explanation == other.explanation
+            and self.event_id == other.event_id
         )
     
     @classmethod
@@ -76,18 +137,46 @@ class Decision:
         cls,
         reasons: Optional[List[str]] = None,
         raw_response: Any = None,
+        severity: Optional[str] = None,
+        classifications: Optional[List[str]] = None,
+        rules: Optional[List[Any]] = None,
+        explanation: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> "Decision":
         """Create an allow decision."""
-        return cls(action="allow", reasons=reasons, raw_response=raw_response)
+        return cls(
+            action="allow",
+            reasons=reasons,
+            raw_response=raw_response,
+            severity=severity,
+            classifications=classifications,
+            rules=rules,
+            explanation=explanation,
+            event_id=event_id,
+        )
     
     @classmethod
     def block(
         cls,
         reasons: List[str],
         raw_response: Any = None,
+        severity: Optional[str] = None,
+        classifications: Optional[List[str]] = None,
+        rules: Optional[List[Any]] = None,
+        explanation: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> "Decision":
         """Create a block decision."""
-        return cls(action="block", reasons=reasons, raw_response=raw_response)
+        return cls(
+            action="block",
+            reasons=reasons,
+            raw_response=raw_response,
+            severity=severity,
+            classifications=classifications,
+            rules=rules,
+            explanation=explanation,
+            event_id=event_id,
+        )
     
     @classmethod
     def sanitize(
@@ -95,6 +184,11 @@ class Decision:
         reasons: List[str],
         sanitized_content: Optional[str] = None,
         raw_response: Any = None,
+        severity: Optional[str] = None,
+        classifications: Optional[List[str]] = None,
+        rules: Optional[List[Any]] = None,
+        explanation: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> "Decision":
         """Create a sanitize decision."""
         return cls(
@@ -102,6 +196,11 @@ class Decision:
             reasons=reasons,
             sanitized_content=sanitized_content,
             raw_response=raw_response,
+            severity=severity,
+            classifications=classifications,
+            rules=rules,
+            explanation=explanation,
+            event_id=event_id,
         )
     
     @classmethod
@@ -109,6 +208,20 @@ class Decision:
         cls,
         reasons: List[str],
         raw_response: Any = None,
+        severity: Optional[str] = None,
+        classifications: Optional[List[str]] = None,
+        rules: Optional[List[Any]] = None,
+        explanation: Optional[str] = None,
+        event_id: Optional[str] = None,
     ) -> "Decision":
         """Create a monitor_only decision."""
-        return cls(action="monitor_only", reasons=reasons, raw_response=raw_response)
+        return cls(
+            action="monitor_only",
+            reasons=reasons,
+            raw_response=raw_response,
+            severity=severity,
+            classifications=classifications,
+            rules=rules,
+            explanation=explanation,
+            event_id=event_id,
+        )

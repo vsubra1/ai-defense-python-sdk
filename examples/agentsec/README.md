@@ -30,6 +30,7 @@ Comprehensive examples demonstrating how to secure AI agents with **Cisco AI Def
 
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Environment Variables Quick Reference](#environment-variables-quick-reference)
 - [Overview](#overview)
 - [Core Concepts](#core-concepts)
 - [Integration Pattern](#integration-pattern)
@@ -38,6 +39,7 @@ Comprehensive examples demonstrating how to secure AI agents with **Cisco AI Def
 - [2. Agent Frameworks](#2-agent-frameworks)
 - [3. Agent Runtimes](#3-agent-runtimes)
 - [Configuration](#configuration)
+- [Advanced Usage](#advanced-usage)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 
@@ -68,9 +70,56 @@ cd 2-agent-frameworks/strands-agent && poetry install && ./scripts/run.sh --open
 
 # 4. Run all tests from the repo root
 cd /path/to/ai-defense-python-sdk
-./scripts/run-unit-tests.sh           # ~1010 unit tests
+./scripts/run-unit-tests.sh           # ~1045 unit tests
 ./scripts/run-integration-tests.sh    # Full integration tests
 ```
+
+---
+
+## Environment Variables Quick Reference
+
+The `.env.example` file contains all variables organized by which examples need them. Here's a quick reference:
+
+### Core (Required for All Examples)
+
+| Variable | Description |
+|----------|-------------|
+| `AGENTSEC_LLM_INTEGRATION_MODE` | `api` or `gateway` |
+| `AGENTSEC_LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+
+### By Integration Mode
+
+| Mode | Required Variables |
+|------|-------------------|
+| **API Mode** | `AI_DEFENSE_API_MODE_LLM_ENDPOINT`, `AI_DEFENSE_API_MODE_LLM_API_KEY` |
+| **Gateway Mode** | Provider-specific gateway URL + key (see below) |
+
+### By LLM Provider
+
+| Provider | API Mode Variables | Gateway Mode Variables |
+|----------|-------------------|----------------------|
+| **OpenAI** | `OPENAI_API_KEY` | `AGENTSEC_OPENAI_GATEWAY_URL`, `AGENTSEC_OPENAI_GATEWAY_API_KEY` |
+| **Azure OpenAI** | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_VERSION` | `AGENTSEC_AZURE_OPENAI_GATEWAY_URL`, `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` |
+| **AWS Bedrock** | `AWS_REGION` + auth (`AWS_PROFILE` or keys) | `AGENTSEC_BEDROCK_GATEWAY_URL` + AWS auth |
+| **GCP Vertex AI** | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` + ADC | `AGENTSEC_VERTEXAI_GATEWAY_URL` + ADC |
+| **MCP Tools** | `MCP_SERVER_URL`, `MCP_TIMEOUT` + MCP API vars | `AGENTSEC_MCP_GATEWAY_URL` |
+
+### By Example Path
+
+| Example | AI Defense | LLM Provider | Extra (Deploy Only) |
+|---------|------------|--------------|---------------------|
+| `1-simple/openai_example.py` | API or Gateway | OpenAI | - |
+| `1-simple/simple_strands_bedrock.py` | API or Gateway | Bedrock | - |
+| `1-simple/mcp_example.py` | API or Gateway | OpenAI + MCP | `MCP_SERVER_URL`, `MCP_TIMEOUT` |
+| `2-agent-frameworks/*/--openai` | API or Gateway | OpenAI | - |
+| `2-agent-frameworks/*/--azure` | API or Gateway | Azure OpenAI | - |
+| `2-agent-frameworks/*/--bedrock` | API or Gateway | Bedrock | - |
+| `2-agent-frameworks/*/--vertex` | API or Gateway | Vertex AI | - |
+| `3-agent-runtimes/microsoft-foundry/` | API or Gateway | Azure OpenAI | `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, etc. |
+| `3-agent-runtimes/amazon-bedrock-agentcore/` | API or Gateway | Bedrock | AWS deployment vars |
+| `3-agent-runtimes/gcp-vertex-ai-agent-engine/` | API or Gateway | Vertex AI | `GKE_AUTHORIZED_NETWORKS` |
+
+> **Tip**: Check the section headers in `.env.example` - each section shows which examples require those variables.
 
 ---
 
@@ -156,7 +205,7 @@ These prerequisites apply to both **Agent Frameworks** and **Agent Runtimes**.
 |-----------|:--------:|---------------|
 | **Cisco AI Defense API** | Yes | `AI_DEFENSE_API_MODE_LLM_ENDPOINT`, `AI_DEFENSE_API_MODE_LLM_API_KEY` |
 | **OpenAI** | If using | `OPENAI_API_KEY` |
-| **Azure OpenAI** | If using | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY` |
+| **Azure OpenAI** | If using | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT_NAME` |
 | **AWS Bedrock** | If using | AWS credentials (profile, SSO, or env vars) |
 | **Vertex AI** | If using | GCP ADC (`gcloud auth application-default login`) |
 
@@ -523,6 +572,26 @@ Copy `.env.example` to `.env` and configure:
 | `AGENTSEC_MCP_GATEWAY_URL` | Gateway + MCP | MCP gateway URL |
 | `AGENTSEC_MCP_GATEWAY_API_KEY` | Gateway + MCP | MCP gateway API key |
 
+#### Advanced Configuration (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENTSEC_TIMEOUT` | 30000 | API request timeout in milliseconds |
+| `AGENTSEC_RETRY_TOTAL` | 3 | Maximum retry attempts for failed requests |
+| `AGENTSEC_RETRY_BACKOFF_FACTOR` | 0.5 | Exponential backoff multiplier |
+| `AGENTSEC_RETRY_STATUS_FORCELIST` | 429,500,502,503,504 | HTTP status codes to retry |
+| `AGENTSEC_POOL_MAX_CONNECTIONS` | 10 | Maximum connections in pool |
+| `AGENTSEC_POOL_MAX_KEEPALIVE` | 5 | Maximum keepalive connections |
+| `AGENTSEC_LLM_ENTITY_TYPES` | (all) | Comma-separated entity types to filter |
+
+#### Metadata Configuration (Optional)
+
+| Variable | Description |
+|----------|-------------|
+| `AGENTSEC_USER` | Default user identifier for inspection context |
+| `AGENTSEC_SRC_APP` | Default source application name |
+| `AGENTSEC_CLIENT_TRANSACTION_ID` | Default transaction ID prefix |
+
 ### Provider Credentials
 
 <details>
@@ -540,6 +609,8 @@ OPENAI_API_KEY=sk-your-openai-api-key
 ```bash
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_API_KEY=your-azure-openai-key
+AZURE_OPENAI_DEPLOYMENT_NAME=your-deployment-name  # e.g., gpt-4o
+AZURE_OPENAI_API_VERSION=2024-08-01-preview
 ```
 
 </details>
@@ -581,6 +652,37 @@ GOOGLE_AI_SDK=vertexai      # Legacy SDK (default)
 
 </details>
 
+### Programmatic Configuration
+
+All environment variables can also be set via `protect()` parameters:
+
+```python
+from aidefense.runtime import agentsec
+
+agentsec.protect(
+    # Core modes
+    api_mode_llm="enforce",
+    api_mode_mcp="monitor",
+    
+    # Advanced: Retry policy
+    retry_total=5,
+    retry_backoff=1.0,
+    retry_status_codes=[429, 500, 502, 503, 504],
+    
+    # Advanced: Connection pool
+    timeout=60000,  # 60 seconds
+    pool_max_connections=20,
+    pool_max_keepalive=10,
+    
+    # Advanced: Entity filtering
+    api_mode_llm_entity_types=["pii", "secrets"],
+    
+    # Advanced: Custom logger
+    custom_logger=my_logger,
+    log_file="/var/log/agentsec.log",
+)
+```
+
 ### YAML Config (Agent Frameworks)
 
 Each agent framework has config files in `config/`:
@@ -605,6 +707,66 @@ Select config via flag:
 
 ---
 
+## Advanced Usage
+
+### Error Handling
+
+agentsec provides typed exceptions for granular error handling:
+
+```python
+from aidefense.runtime.agentsec import (
+    AgentsecError,           # Base exception
+    SecurityPolicyError,     # Policy violation (blocked content)
+    InspectionTimeoutError,  # API timeout
+    InspectionNetworkError,  # Network/connection failure
+    ConfigurationError,      # Invalid configuration
+    ValidationError,         # Input validation failure
+)
+
+try:
+    response = client.chat.completions.create(...)
+except SecurityPolicyError as e:
+    print(f"Blocked: {e.decision.reasons}")
+except InspectionTimeoutError as e:
+    print(f"Timeout after {e.timeout_ms}ms")
+except InspectionNetworkError:
+    print("Network error - check connectivity")
+```
+
+### Request Context
+
+Add metadata to inspection requests for better tracking:
+
+```python
+from aidefense.runtime.agentsec import set_metadata
+
+# Set context before LLM calls
+set_metadata(
+    user="user@example.com",
+    src_app="my-chatbot",
+    client_transaction_id="txn-12345",
+    custom_field="any-value",
+)
+```
+
+### Inspection Results
+
+The `Decision` object includes detailed inspection results:
+
+```python
+decision = inspector.inspect_conversation(messages, metadata)
+
+decision.action          # "allow", "block", "sanitize", "monitor_only"
+decision.is_safe         # True if action != "block"
+decision.reasons         # List of reasons
+decision.severity        # "low", "medium", "high", "critical"
+decision.classifications # ["pii", "prompt_injection", ...]
+decision.event_id        # Unique event identifier for tracking
+decision.explanation     # Human-readable explanation
+```
+
+---
+
 ## Testing
 
 ### Test Summary
@@ -619,11 +781,11 @@ Select config via flag:
 | **AgentCore** | Unit | ~60 | Deploy scripts, protection setup |
 | **AgentCore** | Integration | 8 | (3 deploy x 2 modes) + 2 MCP tests |
 | **Vertex AI** | Unit | ~50 | Deploy scripts, SDK selection |
-| **Vertex AI** | Integration | 8-16 | (3 deploy x 2 modes) + 2 MCP tests** |
+| **Vertex AI** | Integration | 16 | (3 deploy x 2 modes) + 2 MCP tests** |
 | **Azure AI Foundry** | Unit | ~50 | Deploy scripts, agent factory, endpoints |
 | **Azure AI Foundry** | Integration | 8 | (3 deploy x 2 modes) + 2 MCP tests |
 
-**Total: ~1010 unit tests**
+**Total: ~1045 unit tests**
 
 *Provider support varies by framework: OpenAI Agents supports 2 providers (openai, azure), others support 4 (openai, azure, vertex, bedrock)
 
@@ -635,7 +797,7 @@ Select config via flag:
 # From project root
 cd /path/to/ai-defense-python-sdk
 
-# All unit tests (~1010 tests)
+# All unit tests (~1045 tests)
 ./scripts/run-unit-tests.sh
 
 # All integration tests
@@ -700,7 +862,7 @@ python your_agent.py
 import os
 os.environ["AGENTSEC_LOG_LEVEL"] = "DEBUG"
 
-import agentsec
+from aidefense.runtime import agentsec
 agentsec.protect()
 ```
 

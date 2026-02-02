@@ -348,24 +348,6 @@ class TestAgentCoreGatewayMode:
     """Test AgentCore gateway mode functionality."""
 
     @patch("aidefense.runtime.agentsec.patchers.bedrock._state")
-    def test_should_use_agentcore_gateway_checks_config(self, mock_state):
-        """Test _should_use_agentcore_gateway checks gateway URL."""
-        from aidefense.runtime.agentsec.patchers.bedrock import _should_use_agentcore_gateway
-        
-        # Gateway mode but no URL
-        mock_state.get_llm_integration_mode.return_value = "gateway"
-        mock_state.get_provider_gateway_url.return_value = None
-        assert _should_use_agentcore_gateway() is False
-        
-        # Gateway mode with URL (no API key needed for Sig V4)
-        mock_state.get_provider_gateway_url.return_value = "https://gateway.example.com"
-        assert _should_use_agentcore_gateway() is True
-        
-        # API mode
-        mock_state.get_llm_integration_mode.return_value = "api"
-        assert _should_use_agentcore_gateway() is False
-
-    @patch("aidefense.runtime.agentsec.patchers.bedrock._state")
     @patch("boto3.Session")
     @patch("httpx.Client")
     def test_gateway_mode_uses_sig_v4(self, mock_httpx_client, mock_boto3_session, mock_state):
@@ -416,9 +398,10 @@ class TestAgentCoreGatewayMode:
 
     @patch("aidefense.runtime.agentsec.patchers.bedrock._state")
     def test_gateway_mode_raises_when_not_configured(self, mock_state):
-        """Test gateway mode raises error when not configured."""
+        """Test gateway mode raises error when Bedrock gateway not configured."""
         from aidefense.runtime.agentsec.patchers.bedrock import _handle_agentcore_gateway_call
         
+        # AgentCore now uses Bedrock gateway config
         mock_state.get_provider_gateway_url.return_value = None
         
         mock_instance = MagicMock()
@@ -433,7 +416,8 @@ class TestAgentCoreGatewayMode:
                 instance=mock_instance
             )
         
-        assert "AGENTSEC_AGENTCORE_GATEWAY_URL" in str(exc_info.value)
+        # Now checks for Bedrock gateway URL since AgentCore uses Bedrock gateway config
+        assert "AGENTSEC_BEDROCK_GATEWAY_URL" in str(exc_info.value)
 
 
 class TestAgentCoreApiMode:
@@ -526,22 +510,25 @@ class TestAgentCoreOperationsConstant:
 
 
 class TestAgentCoreStateConfig:
-    """Test AgentCore state configuration."""
+    """Test AgentCore state configuration - AgentCore uses Bedrock provider config."""
 
-    def test_agentcore_in_supported_providers(self):
-        """Test agentcore is in SUPPORTED_PROVIDERS."""
+    def test_agentcore_not_in_supported_providers(self):
+        """Test agentcore is NOT in SUPPORTED_PROVIDERS (uses Bedrock config)."""
         from aidefense.runtime.agentsec._state import SUPPORTED_PROVIDERS
         
-        assert "agentcore" in SUPPORTED_PROVIDERS
+        # AgentCore is not a provider - it uses Bedrock as its underlying provider
+        assert "agentcore" not in SUPPORTED_PROVIDERS
 
-    def test_agentcore_in_provider_gateway_config(self):
-        """Test agentcore is in provider gateway config."""
+    def test_bedrock_in_supported_providers(self):
+        """Test bedrock is in SUPPORTED_PROVIDERS (AgentCore uses Bedrock config)."""
+        from aidefense.runtime.agentsec._state import SUPPORTED_PROVIDERS
+        
+        assert "bedrock" in SUPPORTED_PROVIDERS
+
+    def test_agentcore_uses_bedrock_gateway_config(self):
+        """Test AgentCore operations use Bedrock gateway configuration."""
         from aidefense.runtime.agentsec._state import _provider_gateway_config
         
-        assert "agentcore" in _provider_gateway_config
-
-    def test_agentcore_in_provider_api_config(self):
-        """Test agentcore is in provider API config."""
-        from aidefense.runtime.agentsec._state import _provider_api_config
-        
-        assert "agentcore" in _provider_api_config
+        # AgentCore uses Bedrock gateway config, not a separate agentcore config
+        assert "agentcore" not in _provider_gateway_config
+        assert "bedrock" in _provider_gateway_config

@@ -11,7 +11,7 @@ azure:
   endpoint: ${AZURE_OPENAI_ENDPOINT}
 
   # Deployment name - the name you gave your model deployment
-  deployment_name: gpt-4.1
+  deployment_name: ${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4o}
 
   # API version - check Azure docs for latest
   api_version: "2024-02-15-preview"

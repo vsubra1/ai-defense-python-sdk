@@ -164,14 +164,11 @@ agentsec.protect(
     api_mode_llm_api_key=os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
     
     # Gateway Mode Configuration
+    # Note: AgentCore operations use the Bedrock gateway configuration
     providers={
         "bedrock": {
             "gateway_url": os.getenv("AGENTSEC_BEDROCK_GATEWAY_URL"),
             "gateway_api_key": os.getenv("AGENTSEC_BEDROCK_GATEWAY_API_KEY"),
-        },
-        "agentcore": {
-            "gateway_url": os.getenv("AGENTSEC_AGENTCORE_GATEWAY_URL"),
-            # No API key - uses AWS Sig V4 authentication
         },
     },
     
@@ -203,9 +200,8 @@ All environment variables are loaded from the shared `examples/.env` file.
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `AGENTSEC_BEDROCK_GATEWAY_URL` | AI Defense Gateway URL for Bedrock | Yes |
+| `AGENTSEC_BEDROCK_GATEWAY_URL` | AI Defense Gateway URL for Bedrock (also used for AgentCore) | Yes |
 | `AGENTSEC_BEDROCK_GATEWAY_API_KEY` | Gateway API key for Bedrock | Yes |
-| `AGENTSEC_AGENTCORE_GATEWAY_URL` | AI Defense Gateway URL for AgentCore | Yes |
 | `AGENTSEC_MCP_GATEWAY_URL` | AI Defense Gateway URL for MCP | No |
 
 ### AWS Configuration

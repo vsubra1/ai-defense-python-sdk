@@ -69,7 +69,7 @@ print(f"[agentsec] LLM: {os.getenv('AGENTSEC_API_MODE_LLM', 'monitor')} | Integr
 # Import shared provider infrastructure
 # =============================================================================
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from _shared import load_config, create_provider
+from _shared import load_config, create_provider, validate_url, URLValidationError
 
 # =============================================================================
 # Import LangChain libraries (AFTER agentsec.protect())
@@ -104,6 +104,14 @@ def fetch_url(url: str) -> str:
         The text content of the URL
     """
     logger.info(f"fetch_url called: url='{url}'")
+    
+    # Validate URL to prevent SSRF attacks
+    try:
+        validate_url(url)
+    except URLValidationError as e:
+        logger.warning(f"URL validation failed: {e}")
+        return f"Error: Invalid URL - {e}"
+    
     global _mcp_session
     if _mcp_session is None:
         logger.warning("MCP not connected")

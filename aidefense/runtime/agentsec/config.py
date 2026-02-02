@@ -21,6 +21,84 @@ def _parse_bool_env(value: Optional[str], default: bool) -> bool:
     return value.lower() in ("true", "1", "yes", "on")
 
 
+def _parse_int_env(value: Optional[str], default: Optional[int] = None) -> Optional[int]:
+    """
+    Parse integer from environment variable string.
+    
+    Args:
+        value: Environment variable value
+        default: Default value if not set or invalid
+        
+    Returns:
+        Parsed integer or default if value is None/empty/invalid
+    """
+    if value is None or not value.strip():
+        return default
+    try:
+        return int(value.strip())
+    except ValueError:
+        return default
+
+
+def _parse_float_env(value: Optional[str], default: Optional[float] = None) -> Optional[float]:
+    """
+    Parse float from environment variable string.
+    
+    Args:
+        value: Environment variable value
+        default: Default value if not set or invalid
+        
+    Returns:
+        Parsed float or default if value is None/empty/invalid
+    """
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value.strip())
+    except ValueError:
+        return default
+
+
+def _parse_list_env(value: Optional[str]) -> Optional[List[str]]:
+    """
+    Parse comma-separated list from environment variable string.
+    
+    Args:
+        value: Environment variable value (e.g., "EMAIL,PHONE,SSN")
+        
+    Returns:
+        List of strings or None if value is None/empty
+    """
+    if value is None or not value.strip():
+        return None
+    items = [item.strip() for item in value.split(",") if item.strip()]
+    return items if items else None
+
+
+def _parse_int_list_env(value: Optional[str]) -> Optional[List[int]]:
+    """
+    Parse comma-separated integer list from environment variable string.
+    
+    Args:
+        value: Environment variable value (e.g., "500,502,503")
+        
+    Returns:
+        List of integers or None if value is None/empty
+    """
+    if value is None or not value.strip():
+        return None
+    items = []
+    for item in value.split(","):
+        item = item.strip()
+        if item:
+            try:
+                items.append(int(item))
+            except ValueError:
+                # Skip invalid integers
+                pass
+    return items if items else None
+
+
 def _parse_mode_env(value: Optional[str], default: str) -> str:
     """Parse mode from environment variable string with validation."""
     if value is None:
@@ -112,7 +190,7 @@ def _load_provider_config(provider: str, mode: str) -> Dict[str, Optional[str]]:
     Load provider-specific configuration from environment variables.
     
     Args:
-        provider: Provider name (openai, azure_openai, vertexai, bedrock, agentcore)
+        provider: Provider name (openai, azure_openai, vertexai, bedrock)
         mode: Configuration mode (api or gateway)
         
     Returns:
@@ -124,7 +202,6 @@ def _load_provider_config(provider: str, mode: str) -> Dict[str, Optional[str]]:
         "azure_openai": "AZURE_OPENAI",
         "vertexai": "VERTEXAI",
         "bedrock": "BEDROCK",
-        "agentcore": "AGENTCORE",
     }
     
     prefix = provider_prefix_map.get(provider, provider.upper())
@@ -178,7 +255,6 @@ def load_env_config() -> Dict[str, Any]:
         AGENTSEC_VERTEXAI_GATEWAY_API_KEY: Gateway API key for Vertex AI calls
         AGENTSEC_BEDROCK_GATEWAY_URL: Gateway URL for AWS Bedrock calls
         AGENTSEC_BEDROCK_GATEWAY_API_KEY: Gateway API key for AWS Bedrock calls
-        AGENTSEC_AGENTCORE_GATEWAY_URL: Gateway URL for AWS AgentCore calls (uses AWS Sig V4, no API key needed)
         
         # Provider-Specific API Configuration (for direct calls)
         AGENTSEC_OPENAI_API_URL: OpenAI API URL (default: https://api.openai.com/v1)
@@ -201,12 +277,12 @@ def load_env_config() -> Dict[str, Any]:
     
     # Load provider-specific gateway configuration
     provider_gateway_config = {}
-    for provider in ["openai", "azure_openai", "vertexai", "bedrock", "agentcore"]:
+    for provider in ["openai", "azure_openai", "vertexai", "bedrock"]:
         provider_gateway_config[provider] = _load_provider_config(provider, "gateway")
     
     # Load provider-specific API configuration
     provider_api_config = {}
-    for provider in ["openai", "azure_openai", "vertexai", "bedrock", "agentcore"]:
+    for provider in ["openai", "azure_openai", "vertexai", "bedrock"]:
         config = _load_provider_config(provider, "api")
         # Fall back to standard env vars for API keys
         if not config["api_key"]:
@@ -247,6 +323,9 @@ def load_env_config() -> Dict[str, Any]:
         # LLM rules (API mode only)
         "llm_rules": _parse_rules_env(os.environ.get("AGENTSEC_LLM_RULES")),
         
+        # Entity type filtering (new)
+        "llm_entity_types": _parse_list_env(os.environ.get("AGENTSEC_LLM_ENTITY_TYPES")),
+        
         # Other settings
         "tenant_id": os.environ.get("AGENTSEC_TENANT_ID"),
         "application_id": os.environ.get("AGENTSEC_APP_ID"),
@@ -263,6 +342,23 @@ def load_env_config() -> Dict[str, Any]:
         "mcp_api_endpoint": mcp_api_endpoint,
         "mcp_enabled": _parse_bool_env(os.environ.get("AGENTSEC_MCP_ENABLED"), True),
         "redact_logs": _parse_bool_env(os.environ.get("AGENTSEC_REDACT_LOGS"), True),
+        
+        # Metadata configuration (new)
+        "user": os.environ.get("AGENTSEC_USER"),
+        "src_app": os.environ.get("AGENTSEC_SRC_APP"),
+        "client_transaction_id": os.environ.get("AGENTSEC_CLIENT_TRANSACTION_ID"),
+        
+        # Retry policy configuration (new)
+        "retry_total": _parse_int_env(os.environ.get("AGENTSEC_RETRY_TOTAL")),
+        "retry_backoff_factor": _parse_float_env(os.environ.get("AGENTSEC_RETRY_BACKOFF_FACTOR")),
+        "retry_status_forcelist": _parse_int_list_env(os.environ.get("AGENTSEC_RETRY_STATUS_FORCELIST")),
+        
+        # Connection pool configuration (new)
+        "pool_max_connections": _parse_int_env(os.environ.get("AGENTSEC_POOL_MAX_CONNECTIONS")),
+        "pool_max_keepalive": _parse_int_env(os.environ.get("AGENTSEC_POOL_MAX_KEEPALIVE")),
+        
+        # Timeout configuration (new) - in seconds
+        "timeout": _parse_int_env(os.environ.get("AGENTSEC_TIMEOUT")),
     }
 
 

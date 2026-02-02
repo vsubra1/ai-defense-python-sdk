@@ -40,7 +40,8 @@ from typing import List, Dict, Any
 # =============================================================================
 from dotenv import load_dotenv
 
-# Try to load from examples/.env (shared env file)
+# Try to load from examples/agentsec/.env (shared env file)
+# Path: _shared/ -> microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
 _shared_env = Path(__file__).parent.parent.parent.parent / ".env"
 if _shared_env.exists():
     load_dotenv(_shared_env)
@@ -151,7 +152,8 @@ def _get_agent():
         
         # Model/deployment configuration
         # Azure OpenAI uses deployment names instead of model names
-        deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1")
+        # The deployment name should match your Azure OpenAI resource deployment
+        deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
         api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
         
         print(f"[agent] Creating LangChain agent with Azure OpenAI", flush=True)

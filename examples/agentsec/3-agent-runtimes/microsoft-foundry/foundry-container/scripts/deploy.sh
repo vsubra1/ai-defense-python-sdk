@@ -33,11 +33,12 @@ ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-# Load environment variables from shared examples/.env
-EXAMPLES_DIR="$(cd "$ROOT_DIR/.." && pwd)"
-if [ -f "$EXAMPLES_DIR/.env" ]; then
+# Load environment variables from shared examples/agentsec/.env
+# Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
+AGENTSEC_EXAMPLES_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
+if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
     set -a
-    source "$EXAMPLES_DIR/.env"
+    source "$AGENTSEC_EXAMPLES_DIR/.env"
     set +a
 fi
 
@@ -73,15 +74,16 @@ echo ""
 echo "Setting Azure subscription..."
 az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 
-# Copy aidefense SDK source to the build context (includes agentsec at aidefense/runtime/agentsec)
+# Copy agentsec source to the build context (it's not on PyPI)
 echo "Copying aidefense SDK source to build context..."
-AIDEFENSE_SRC="$ROOT_DIR/../../../../aidefense"
+# Path: agentsec/ -> examples/ -> repo-root/aidefense/
+AIDEFENSE_SRC="$AGENTSEC_EXAMPLES_DIR/../../aidefense"
 if [ -d "$AIDEFENSE_SRC" ]; then
     rm -rf "$ROOT_DIR/aidefense" 2>/dev/null || true
-    cp -R "$AIDEFENSE_SRC" "$ROOT_DIR/"
-    echo "Copied aidefense from $AIDEFENSE_SRC"
+    cp -R "$AIDEFENSE_SRC" "$ROOT_DIR/aidefense"
+    echo "Copied aidefense from $AIDEFENSE_SRC to $ROOT_DIR/aidefense"
 else
-    echo "ERROR: aidefense SDK source not found at $AIDEFENSE_SRC"
+    echo "ERROR: aidefense source not found at $AIDEFENSE_SRC"
     exit 1
 fi
 
@@ -99,36 +101,41 @@ az acr build \
 
 # Create endpoint configuration YAML
 cat > "$DEPLOY_DIR/endpoint.yaml" << EOF
-\$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
+\$schema: https://azuremlsdk2.blob.core.windows.net/latest/managedOnlineEndpoint.schema.json
 name: $ENDPOINT_NAME
 auth_mode: key
 EOF
 
 # Create deployment configuration YAML
+# NOTE: For custom containers (BYOC), the model section is optional.
+# Azure ML inference server (azmlinfsrv) uses "/" for liveness/readiness and "/score" for scoring.
 cat > "$DEPLOY_DIR/deployment.yaml" << EOF
 \$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
 name: $DEPLOYMENT_NAME
 endpoint_name: $ENDPOINT_NAME
-model:
-  path: .
-  type: custom_model
 environment:
+  name: foundry-container-env
   image: $FULL_IMAGE_NAME
   inference_config:
     liveness_route:
-      path: /health
-      port: 8080
+      port: 5001
+      path: /
     readiness_route:
-      path: /health
-      port: 8080
+      port: 5001
+      path: /
     scoring_route:
+      port: 5001
       path: /score
-      port: 8080
 instance_type: $INSTANCE_TYPE
 instance_count: $INSTANCE_COUNT
+request_settings:
+  request_timeout_ms: 120000
+  max_concurrent_requests_per_instance: 1
 environment_variables:
   AZURE_OPENAI_ENDPOINT: "$AZURE_OPENAI_ENDPOINT"
   AZURE_OPENAI_API_KEY: "$AZURE_OPENAI_API_KEY"
+  AZURE_OPENAI_DEPLOYMENT_NAME: "${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4o}"
+  AZURE_OPENAI_API_VERSION: "${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}"
   AGENTSEC_LLM_INTEGRATION_MODE: "${AGENTSEC_LLM_INTEGRATION_MODE:-api}"
   AGENTSEC_MCP_INTEGRATION_MODE: "${AGENTSEC_MCP_INTEGRATION_MODE:-api}"
   AGENTSEC_API_MODE_LLM: "${AGENTSEC_API_MODE_LLM:-monitor}"
@@ -154,11 +161,22 @@ fi
 
 # Create or update deployment
 echo "Creating/updating deployment..."
-az ml online-deployment create \
-    --file "$DEPLOY_DIR/deployment.yaml" \
+if az ml online-deployment show --name "$DEPLOYMENT_NAME" --endpoint-name "$ENDPOINT_NAME" \
     --resource-group "$AZURE_RESOURCE_GROUP" \
-    --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
-    --all-traffic
+    --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" &>/dev/null; then
+    echo "Deployment exists, updating..."
+    az ml online-deployment update \
+        --file "$DEPLOY_DIR/deployment.yaml" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --workspace-name "$AZURE_AI_FOUNDRY_PROJECT"
+else
+    echo "Creating new deployment..."
+    az ml online-deployment create \
+        --file "$DEPLOY_DIR/deployment.yaml" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
+        --all-traffic
+fi
 
 # Get endpoint URL
 ENDPOINT_URL=$(az ml online-endpoint show \

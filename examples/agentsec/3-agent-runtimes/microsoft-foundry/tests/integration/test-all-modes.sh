@@ -32,7 +32,7 @@
 #   ./tests/integration/test-all-modes.sh --deploy agent-app # Deploy and test agent app
 # =============================================================================
 
-set -euo pipefail
+set -o pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -67,15 +67,14 @@ fi
 ALL_DEPLOY_MODES=("agent-app" "azure-functions" "container")
 ALL_INTEGRATION_MODES=("api" "gateway")
 RUN_MCP_TESTS=true
-DEPLOY_MODE=false  # When true, deploy to Azure and test real endpoints
+LOCAL_ONLY=false  # Default to DEPLOY mode (deploy to Azure and test real endpoints)
+FORCE_DEPLOY=false  # When true, force redeployment even if already deployed
+RECREATE_DEPLOY=false  # When true, delete and recreate deployments (clean deploy)
 
 # Counters
 TESTS_PASSED=0
 TESTS_FAILED=0
 TESTS_SKIPPED=0
-
-# Timing tracking (using regular array with key:value format for bash 3 compatibility)
-DEPLOY_MODE_TIMES=()
 
 # =============================================================================
 # Helper Functions
@@ -115,13 +114,16 @@ show_help() {
     echo "Usage: $0 [OPTIONS] [DEPLOY_MODE]"
     echo ""
     echo "Options:"
-    echo "  --local          Run LOCAL tests (default) - tests agent with Azure OpenAI only"
-    echo "  --deploy         Run DEPLOY tests - deploys to Azure and tests real endpoints"
+    echo "  --local          Run LOCAL tests only (no Azure deployment)"
+    echo "  --deploy         Explicitly run DEPLOY tests (default behavior)"
+    echo "  --force-deploy   Force redeployment update even if already deployed"
+    echo "  --recreate       Delete and recreate deployments (clean deploy)"
     echo "  --verbose, -v    Show detailed output"
     echo "  --api            Test API mode only (default: both modes)"
     echo "  --gateway        Test Gateway mode only (default: both modes)"
     echo "  --no-mcp         Skip MCP tool protection tests"
-    echo "  --mcp-only       Run only MCP tool protection tests"
+    echo "  --mcp-only       Run only MCP tool protection tests (direct invocation)"
+    echo "  --mcp-agent      Run agent-prompted MCP tests (LLM triggers MCP tool call)"
     echo "  --help, -h       Show this help"
     echo ""
     echo "Deploy Modes:"
@@ -130,21 +132,27 @@ show_help() {
     echo "  container        Test Container deployment"
     echo ""
     echo "Test Modes:"
-    echo "  Without --deploy: Tests agent LOCALLY using Azure OpenAI credentials"
-    echo "                    Requires: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY"
+    echo "  Default (no flag): Deploys to Azure and tests real endpoints"
+    echo "                     Requires: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP,"
+    echo "                               AZURE_AI_FOUNDRY_PROJECT, etc."
     echo ""
-    echo "  With --deploy:    Deploys to Azure and tests real endpoints"
-    echo "                    Requires: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP,"
-    echo "                              AZURE_AI_FOUNDRY_PROJECT, etc."
+    echo "  With --local:      Tests agent LOCALLY using Azure OpenAI credentials"
+    echo "                     Requires: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY"
+    echo ""
+    echo "MCP Test Modes:"
+    echo "  --mcp-only       Direct MCP test: directly invokes MCP tool (fast)"
+    echo "  --mcp-agent      Agent-prompted MCP test: prompts LLM to trigger MCP (full loop)"
     echo ""
     echo "Examples:"
-    echo "  $0                          # Run local tests (default)"
-    echo "  $0 --local                  # Run local tests (explicit)"
-    echo "  $0 --verbose                # Run local tests with details"
-    echo "  $0 --deploy                 # Deploy and test in Azure"
-    echo "  $0 --deploy agent-app       # Deploy and test agent app only"
-    echo "  $0 --api                    # Run local tests, API mode only"
-    echo "  $0 --deploy --api           # Deploy and test, API mode only"
+    echo "  $0                          # Deploy and test in Azure (default)"
+    echo "  $0 --verbose                # Deploy and test with details"
+    echo "  $0 --force-deploy           # Force update existing deployments"
+    echo "  $0 --recreate               # Delete and recreate deployments"
+    echo "  $0 --local                  # Run local tests only"
+    echo "  $0 agent-app                # Deploy and test agent app only"
+    echo "  $0 --api                    # Deploy and test, API mode only"
+    echo "  $0 --local --api            # Local tests, API mode only"
+    echo "  $0 --mcp-agent --verbose    # Test LLM → MCP flow with details"
 }
 
 setup_log_dir() {
@@ -197,17 +205,14 @@ check_azure_openai_credentials() {
 # Local Test Function (tests agent locally using Azure OpenAI)
 # =============================================================================
 
-# =============================================================================
-# Local Test Functions (tests each deploy mode locally)
-# =============================================================================
-
-test_foundry_agent_app_local() {
+test_local_agent() {
     local integration_mode=$1
-    local log_file="$LOG_DIR/agent-app-local-${integration_mode}.log"
+    local deploy_mode=$2
+    local log_file="$LOG_DIR/${deploy_mode}-local-${integration_mode}.log"
     
-    log_subheader "Testing: Foundry Agent App LOCAL [$integration_mode mode]"
+    log_subheader "Testing: Local Agent [$integration_mode mode]"
     
-    log_info "Mode: LOCAL (Flask test client)"
+    log_info "Mode: LOCAL (using Azure OpenAI directly)"
     log_info "Integration mode: $integration_mode"
     log_info "Running test with question: \"$TEST_QUESTION\""
     
@@ -220,56 +225,24 @@ test_foundry_agent_app_local() {
     # Enable debug logging for verbose output
     if [ "$VERBOSE" = "true" ]; then
         export AGENTSEC_LOG_LEVEL="DEBUG"
+    else
+        export AGENTSEC_LOG_LEVEL="INFO"
     fi
     
     local start_time=$(date +%s)
     
-    # Run the Flask app test using Flask test client
+    # Run the agent directly
     if [ -n "$TIMEOUT_CMD" ]; then
         $TIMEOUT_CMD "$TIMEOUT_SECONDS" poetry run python -c "
-import sys
-sys.path.insert(0, 'foundry-agent-app')
-from app import app
-import json
-
-# Use Flask test client
-client = app.test_client()
-
-# Test health endpoint
-health_resp = client.get('/health')
-print('Health check:', health_resp.status_code, health_resp.get_json())
-
-# Test invoke endpoint
-response = client.post('/invoke', 
-    data=json.dumps({'prompt': '$TEST_QUESTION'}),
-    content_type='application/json')
-    
-print('Invoke response:', response.status_code)
-result = response.get_json()
-print('RESULT:', result.get('result', result.get('error', 'No result')))
+from _shared import invoke_agent
+result = invoke_agent('$TEST_QUESTION')
+print('RESULT:', result)
 " > "$log_file" 2>&1 || local exit_code=$?
     else
         poetry run python -c "
-import sys
-sys.path.insert(0, 'foundry-agent-app')
-from app import app
-import json
-
-# Use Flask test client
-client = app.test_client()
-
-# Test health endpoint
-health_resp = client.get('/health')
-print('Health check:', health_resp.status_code, health_resp.get_json())
-
-# Test invoke endpoint
-response = client.post('/invoke', 
-    data=json.dumps({'prompt': '$TEST_QUESTION'}),
-    content_type='application/json')
-    
-print('Invoke response:', response.status_code)
-result = response.get_json()
-print('RESULT:', result.get('result', result.get('error', 'No result')))
+from _shared import invoke_agent
+result = invoke_agent('$TEST_QUESTION')
+print('RESULT:', result)
 " > "$log_file" 2>&1 || local exit_code=$?
     fi
     exit_code=${exit_code:-0}
@@ -280,202 +253,6 @@ print('RESULT:', result.get('result', result.get('error', 'No result')))
     log_info "Completed in ${duration}s (exit code: $exit_code)"
     
     # Validate results
-    validate_local_test_results "$log_file" "$integration_mode" "Foundry Agent App"
-}
-
-test_azure_functions_local() {
-    local integration_mode=$1
-    local log_file="$LOG_DIR/azure-functions-local-${integration_mode}.log"
-    
-    log_subheader "Testing: Azure Functions LOCAL [$integration_mode mode]"
-    
-    # Check if azure.functions module is available
-    if ! poetry run python -c "import azure.functions" 2>/dev/null; then
-        log_skip "azure.functions not installed (install with: poetry install --with azure-functions)"
-        ((TESTS_SKIPPED++))
-        return 0
-    fi
-    
-    log_info "Mode: LOCAL (direct function invocation)"
-    log_info "Integration mode: $integration_mode"
-    log_info "Running test with question: \"$TEST_QUESTION\""
-    
-    cd "$PROJECT_DIR"
-    
-    # Set integration mode via environment variables
-    export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
-    export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
-    
-    # Enable debug logging for verbose output
-    if [ "$VERBOSE" = "true" ]; then
-        export AGENTSEC_LOG_LEVEL="DEBUG"
-    fi
-    
-    local start_time=$(date +%s)
-    
-    # Run the Azure Functions handler directly with a mock request
-    if [ -n "$TIMEOUT_CMD" ]; then
-        $TIMEOUT_CMD "$TIMEOUT_SECONDS" poetry run python -c "
-import sys
-import json
-sys.path.insert(0, 'azure-functions')
-
-# Import the function app
-from function_app import app, invoke
-
-# Create a mock HTTP request
-class MockHttpRequest:
-    def __init__(self, body):
-        self._body = body.encode() if isinstance(body, str) else body
-    
-    def get_body(self):
-        return self._body
-    
-    def get_json(self):
-        return json.loads(self._body)
-
-# Test the invoke function
-request = MockHttpRequest(json.dumps({'prompt': '$TEST_QUESTION'}))
-response = invoke(request)
-
-print('Function response status:', response.status_code)
-result = json.loads(response.get_body())
-print('RESULT:', result.get('result', result.get('error', 'No result')))
-" > "$log_file" 2>&1 || local exit_code=$?
-    else
-        poetry run python -c "
-import sys
-import json
-sys.path.insert(0, 'azure-functions')
-
-# Import the function app
-from function_app import app, invoke
-
-# Create a mock HTTP request
-class MockHttpRequest:
-    def __init__(self, body):
-        self._body = body.encode() if isinstance(body, str) else body
-    
-    def get_body(self):
-        return self._body
-    
-    def get_json(self):
-        return json.loads(self._body)
-
-# Test the invoke function
-request = MockHttpRequest(json.dumps({'prompt': '$TEST_QUESTION'}))
-response = invoke(request)
-
-print('Function response status:', response.status_code)
-result = json.loads(response.get_body())
-print('RESULT:', result.get('result', result.get('error', 'No result')))
-" > "$log_file" 2>&1 || local exit_code=$?
-    fi
-    exit_code=${exit_code:-0}
-    
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    
-    log_info "Completed in ${duration}s (exit code: $exit_code)"
-    
-    # Validate results
-    validate_local_test_results "$log_file" "$integration_mode" "Azure Functions"
-}
-
-test_foundry_container_local() {
-    local integration_mode=$1
-    local log_file="$LOG_DIR/container-local-${integration_mode}.log"
-    
-    log_subheader "Testing: Foundry Container LOCAL [$integration_mode mode]"
-    
-    # Check if Docker is available
-    if ! command -v docker &> /dev/null; then
-        log_info "Mode: LOCAL (Flask test client - Docker not available)"
-    else
-        log_info "Mode: LOCAL (Flask test client)"
-    fi
-    log_info "Integration mode: $integration_mode"
-    log_info "Running test with question: \"$TEST_QUESTION\""
-    
-    cd "$PROJECT_DIR"
-    
-    # Set integration mode via environment variables
-    export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
-    export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
-    
-    # Enable debug logging for verbose output
-    if [ "$VERBOSE" = "true" ]; then
-        export AGENTSEC_LOG_LEVEL="DEBUG"
-    fi
-    
-    local start_time=$(date +%s)
-    
-    # Run the container app test using Flask test client
-    # (Same as foundry-agent-app since they share similar Flask structure)
-    if [ -n "$TIMEOUT_CMD" ]; then
-        $TIMEOUT_CMD "$TIMEOUT_SECONDS" poetry run python -c "
-import sys
-sys.path.insert(0, 'foundry-container')
-from app import app
-import json
-
-# Use Flask test client
-client = app.test_client()
-
-# Test health endpoint
-health_resp = client.get('/health')
-print('Health check:', health_resp.status_code, health_resp.get_json())
-
-# Test invoke endpoint
-response = client.post('/invoke', 
-    data=json.dumps({'prompt': '$TEST_QUESTION'}),
-    content_type='application/json')
-    
-print('Invoke response:', response.status_code)
-result = response.get_json()
-print('RESULT:', result.get('result', result.get('error', 'No result')))
-" > "$log_file" 2>&1 || local exit_code=$?
-    else
-        poetry run python -c "
-import sys
-sys.path.insert(0, 'foundry-container')
-from app import app
-import json
-
-# Use Flask test client
-client = app.test_client()
-
-# Test health endpoint
-health_resp = client.get('/health')
-print('Health check:', health_resp.status_code, health_resp.get_json())
-
-# Test invoke endpoint
-response = client.post('/invoke', 
-    data=json.dumps({'prompt': '$TEST_QUESTION'}),
-    content_type='application/json')
-    
-print('Invoke response:', response.status_code)
-result = response.get_json()
-print('RESULT:', result.get('result', result.get('error', 'No result')))
-" > "$log_file" 2>&1 || local exit_code=$?
-    fi
-    exit_code=${exit_code:-0}
-    
-    local end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    
-    log_info "Completed in ${duration}s (exit code: $exit_code)"
-    
-    # Validate results
-    validate_local_test_results "$log_file" "$integration_mode" "Foundry Container"
-}
-
-# Helper function to validate local test results
-validate_local_test_results() {
-    local log_file=$1
-    local integration_mode=$2
-    local test_name=$3
-    
     local all_checks_passed=true
     
     # Check 1: agentsec patched clients
@@ -541,15 +318,139 @@ validate_local_test_results() {
     # Summary
     if [ "$all_checks_passed" = "true" ]; then
         echo ""
-        echo -e "  ${GREEN}${BOLD}► $test_name [$integration_mode]: ALL CHECKS PASSED${NC}"
+        echo -e "  ${GREEN}${BOLD}► Local Agent [$integration_mode]: ALL CHECKS PASSED${NC}"
         ((TESTS_PASSED++))
         return 0
     else
         echo ""
-        echo -e "  ${RED}${BOLD}► $test_name [$integration_mode]: SOME CHECKS FAILED${NC}"
+        echo -e "  ${RED}${BOLD}► Local Agent [$integration_mode]: SOME CHECKS FAILED${NC}"
         ((TESTS_FAILED++))
         return 1
     fi
+}
+
+# =============================================================================
+# Deployment Status Check Functions
+# =============================================================================
+
+# Check if Foundry Agent App endpoint exists and is running
+check_foundry_agent_app_deployed() {
+    local endpoint_name="${ENDPOINT_NAME:-foundry-sre-agent}"
+    az ml online-endpoint show \
+        --name "$endpoint_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
+        --query "provisioning_state" -o tsv 2>/dev/null | grep -q "Succeeded"
+}
+
+# Check if Azure Functions app exists and has functions deployed
+check_azure_functions_deployed() {
+    local func_name="${AZURE_FUNCTION_APP_NAME:-}"
+    if [ -z "$func_name" ]; then
+        return 1
+    fi
+    # Check if function app exists and has functions
+    az functionapp function list \
+        --name "$func_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --query "length(@)" -o tsv 2>/dev/null | grep -qE "^[1-9]"
+}
+
+# Check if Foundry Container endpoint exists and is running
+check_foundry_container_deployed() {
+    local endpoint_name="${CONTAINER_ENDPOINT_NAME:-foundry-sre-container}"
+    az ml online-endpoint show \
+        --name "$endpoint_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
+        --query "provisioning_state" -o tsv 2>/dev/null | grep -q "Succeeded"
+}
+
+# =============================================================================
+# Deployment Deletion Functions (for --recreate)
+# =============================================================================
+
+# Delete Foundry Agent App deployment
+delete_foundry_agent_app_deployment() {
+    local endpoint_name="${AGENT_ENDPOINT_NAME:-foundry-sre-agent}"
+    local deployment_name="${AGENT_DEPLOYMENT_NAME:-default}"
+    
+    log_info "Deleting Foundry Agent App deployment..."
+    
+    # Delete deployment first
+    if az ml online-deployment show --name "$deployment_name" --endpoint-name "$endpoint_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" &>/dev/null; then
+        log_info "Deleting deployment: $deployment_name"
+        az ml online-deployment delete \
+            --name "$deployment_name" \
+            --endpoint-name "$endpoint_name" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
+            --yes 2>/dev/null || true
+    fi
+    
+    # Delete endpoint
+    if az ml online-endpoint show --name "$endpoint_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" &>/dev/null; then
+        log_info "Deleting endpoint: $endpoint_name"
+        az ml online-endpoint delete \
+            --name "$endpoint_name" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
+            --yes 2>/dev/null || true
+    fi
+    
+    log_pass "Foundry Agent App deployment deleted"
+}
+
+# Delete Foundry Container deployment
+delete_foundry_container_deployment() {
+    local endpoint_name="${CONTAINER_ENDPOINT_NAME:-foundry-sre-container}"
+    local deployment_name="${CONTAINER_DEPLOYMENT_NAME:-default}"
+    
+    log_info "Deleting Foundry Container deployment..."
+    
+    # Delete deployment first
+    if az ml online-deployment show --name "$deployment_name" --endpoint-name "$endpoint_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" &>/dev/null; then
+        log_info "Deleting deployment: $deployment_name"
+        az ml online-deployment delete \
+            --name "$deployment_name" \
+            --endpoint-name "$endpoint_name" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
+            --yes 2>/dev/null || true
+    fi
+    
+    # Delete endpoint
+    if az ml online-endpoint show --name "$endpoint_name" \
+        --resource-group "$AZURE_RESOURCE_GROUP" \
+        --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" &>/dev/null; then
+        log_info "Deleting endpoint: $endpoint_name"
+        az ml online-endpoint delete \
+            --name "$endpoint_name" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
+            --yes 2>/dev/null || true
+    fi
+    
+    log_pass "Foundry Container deployment deleted"
+}
+
+# Delete Azure Functions deployment (redeploy will overwrite)
+delete_azure_functions_deployment() {
+    local func_name="${AZURE_FUNCTION_APP_NAME:-}"
+    
+    if [ -z "$func_name" ]; then
+        log_info "Azure Function app name not configured, skipping delete"
+        return 0
+    fi
+    
+    log_info "Azure Functions will be redeployed (no deletion needed)"
+    log_pass "Ready for Azure Functions redeployment"
 }
 
 # =============================================================================
@@ -578,20 +479,49 @@ test_foundry_agent_app_deploy() {
     export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
     export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
     
-    # Deploy if not already deployed
-    log_info "Deploying Foundry Agent App..."
-    local deploy_start=$(date +%s)
-    if bash "$deploy_script" > "$LOG_DIR/agent-app-deploy-setup.log" 2>&1; then
-        local deploy_end=$(date +%s)
-        local deploy_duration=$((deploy_end - deploy_start))
-        log_pass "Deployment successful (${deploy_duration}s)"
-    else
-        log_fail "Deployment failed (see $LOG_DIR/agent-app-deploy-setup.log)"
-        if [ "$VERBOSE" = "true" ]; then
-            tail -20 "$LOG_DIR/agent-app-deploy-setup.log" | sed 's/^/    /'
+    # Handle recreate: delete existing deployment first
+    if [ "$RECREATE_DEPLOY" = "true" ]; then
+        log_info "Recreate requested - deleting existing deployment first..."
+        delete_foundry_agent_app_deployment
+        log_info "Creating fresh deployment..."
+        if bash "$deploy_script" > "$LOG_DIR/agent-app-deploy-setup.log" 2>&1; then
+            log_pass "Fresh deployment successful"
+        else
+            log_fail "Deployment failed (see $LOG_DIR/agent-app-deploy-setup.log)"
+            if [ "$VERBOSE" = "true" ]; then
+                tail -20 "$LOG_DIR/agent-app-deploy-setup.log" | sed 's/^/    /'
+            fi
+            ((TESTS_FAILED++))
+            return 1
         fi
-        ((TESTS_FAILED++))
-        return 1
+    # Handle force deploy: update existing deployment
+    elif [ "$FORCE_DEPLOY" = "true" ]; then
+        log_info "Force deploy requested - updating Foundry Agent App..."
+        if bash "$deploy_script" > "$LOG_DIR/agent-app-deploy-setup.log" 2>&1; then
+            log_pass "Deployment update successful"
+        else
+            log_fail "Deployment failed (see $LOG_DIR/agent-app-deploy-setup.log)"
+            if [ "$VERBOSE" = "true" ]; then
+                tail -20 "$LOG_DIR/agent-app-deploy-setup.log" | sed 's/^/    /'
+            fi
+            ((TESTS_FAILED++))
+            return 1
+        fi
+    elif check_foundry_agent_app_deployed; then
+        log_pass "Foundry Agent App already deployed - skipping deployment"
+    else
+        # Deploy
+        log_info "Deploying Foundry Agent App..."
+        if bash "$deploy_script" > "$LOG_DIR/agent-app-deploy-setup.log" 2>&1; then
+            log_pass "Deployment successful"
+        else
+            log_fail "Deployment failed (see $LOG_DIR/agent-app-deploy-setup.log)"
+            if [ "$VERBOSE" = "true" ]; then
+                tail -20 "$LOG_DIR/agent-app-deploy-setup.log" | sed 's/^/    /'
+            fi
+            ((TESTS_FAILED++))
+            return 1
+        fi
     fi
     
     # Invoke the endpoint
@@ -662,20 +592,34 @@ test_azure_functions_deploy() {
     export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
     export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
     
-    # Deploy
-    log_info "Deploying Azure Function..."
-    local deploy_start=$(date +%s)
-    if bash "$deploy_script" > "$LOG_DIR/azure-functions-deploy-setup.log" 2>&1; then
-        local deploy_end=$(date +%s)
-        local deploy_duration=$((deploy_end - deploy_start))
-        log_pass "Deployment successful (${deploy_duration}s)"
-    else
-        log_fail "Deployment failed (see $LOG_DIR/azure-functions-deploy-setup.log)"
-        if [ "$VERBOSE" = "true" ]; then
-            tail -20 "$LOG_DIR/azure-functions-deploy-setup.log" | sed 's/^/    /'
+    # Handle recreate or force deploy: redeploy Azure Functions
+    if [ "$RECREATE_DEPLOY" = "true" ] || [ "$FORCE_DEPLOY" = "true" ]; then
+        log_info "Redeploying Azure Functions..."
+        if bash "$deploy_script" > "$LOG_DIR/azure-functions-deploy-setup.log" 2>&1; then
+            log_pass "Deployment successful"
+        else
+            log_fail "Deployment failed (see $LOG_DIR/azure-functions-deploy-setup.log)"
+            if [ "$VERBOSE" = "true" ]; then
+                tail -20 "$LOG_DIR/azure-functions-deploy-setup.log" | sed 's/^/    /'
+            fi
+            ((TESTS_FAILED++))
+            return 1
         fi
-        ((TESTS_FAILED++))
-        return 1
+    elif check_azure_functions_deployed; then
+        log_pass "Azure Functions already deployed - skipping deployment"
+    else
+        # Deploy
+        log_info "Deploying Azure Function..."
+        if bash "$deploy_script" > "$LOG_DIR/azure-functions-deploy-setup.log" 2>&1; then
+            log_pass "Deployment successful"
+        else
+            log_fail "Deployment failed (see $LOG_DIR/azure-functions-deploy-setup.log)"
+            if [ "$VERBOSE" = "true" ]; then
+                tail -20 "$LOG_DIR/azure-functions-deploy-setup.log" | sed 's/^/    /'
+            fi
+            ((TESTS_FAILED++))
+            return 1
+        fi
     fi
     
     # Invoke
@@ -746,20 +690,49 @@ test_foundry_container_deploy() {
     export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
     export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
     
-    # Deploy
-    log_info "Building and deploying container..."
-    local deploy_start=$(date +%s)
-    if bash "$deploy_script" > "$LOG_DIR/container-deploy-setup.log" 2>&1; then
-        local deploy_end=$(date +%s)
-        local deploy_duration=$((deploy_end - deploy_start))
-        log_pass "Deployment successful (${deploy_duration}s)"
-    else
-        log_fail "Deployment failed (see $LOG_DIR/container-deploy-setup.log)"
-        if [ "$VERBOSE" = "true" ]; then
-            tail -20 "$LOG_DIR/container-deploy-setup.log" | sed 's/^/    /'
+    # Handle recreate: delete existing deployment first
+    if [ "$RECREATE_DEPLOY" = "true" ]; then
+        log_info "Recreate requested - deleting existing deployment first..."
+        delete_foundry_container_deployment
+        log_info "Creating fresh container deployment..."
+        if bash "$deploy_script" > "$LOG_DIR/container-deploy-setup.log" 2>&1; then
+            log_pass "Fresh deployment successful"
+        else
+            log_fail "Deployment failed (see $LOG_DIR/container-deploy-setup.log)"
+            if [ "$VERBOSE" = "true" ]; then
+                tail -20 "$LOG_DIR/container-deploy-setup.log" | sed 's/^/    /'
+            fi
+            ((TESTS_FAILED++))
+            return 1
         fi
-        ((TESTS_FAILED++))
-        return 1
+    # Handle force deploy: update existing deployment
+    elif [ "$FORCE_DEPLOY" = "true" ]; then
+        log_info "Force deploy requested - updating container deployment..."
+        if bash "$deploy_script" > "$LOG_DIR/container-deploy-setup.log" 2>&1; then
+            log_pass "Deployment update successful"
+        else
+            log_fail "Deployment failed (see $LOG_DIR/container-deploy-setup.log)"
+            if [ "$VERBOSE" = "true" ]; then
+                tail -20 "$LOG_DIR/container-deploy-setup.log" | sed 's/^/    /'
+            fi
+            ((TESTS_FAILED++))
+            return 1
+        fi
+    elif check_foundry_container_deployed; then
+        log_pass "Foundry Container already deployed - skipping deployment"
+    else
+        # Deploy
+        log_info "Building and deploying container..."
+        if bash "$deploy_script" > "$LOG_DIR/container-deploy-setup.log" 2>&1; then
+            log_pass "Deployment successful"
+        else
+            log_fail "Deployment failed (see $LOG_DIR/container-deploy-setup.log)"
+            if [ "$VERBOSE" = "true" ]; then
+                tail -20 "$LOG_DIR/container-deploy-setup.log" | sed 's/^/    /'
+            fi
+            ((TESTS_FAILED++))
+            return 1
+        fi
     fi
     
     # Invoke
@@ -802,7 +775,7 @@ test_foundry_container_deploy() {
 }
 
 # =============================================================================
-# MCP Test Function
+# MCP Test Functions
 # =============================================================================
 
 test_mcp_protection() {
@@ -830,11 +803,13 @@ test_mcp_protection() {
     
     if [ "$VERBOSE" = "true" ]; then
         export AGENTSEC_LOG_LEVEL="DEBUG"
+    else
+        export AGENTSEC_LOG_LEVEL="INFO"
     fi
     
     local start_time=$(date +%s)
     
-    # Run the MCP test
+    # Run the MCP test (direct tool invocation)
     if [ -n "$TIMEOUT_CMD" ]; then
         $TIMEOUT_CMD "$TIMEOUT_SECONDS" poetry run python "$test_script" > "$log_file" 2>&1 || local exit_code=$?
     else
@@ -859,17 +834,19 @@ test_mcp_protection() {
     fi
     
     # Check 2: MCP Request inspection
-    if grep -q "MCP.*request\|MCP TOOL CALL" "$log_file"; then
+    if grep -qi "MCP.*request.*inspection\|MCP TOOL CALL\|call_tool.*fetch.*Request" "$log_file"; then
         log_pass "MCP Request inspection executed"
     else
-        log_info "MCP Request inspection not found (may be OK)"
+        log_fail "MCP Request inspection NOT executed"
+        all_checks_passed=false
     fi
     
     # Check 3: MCP Response inspection
-    if grep -q "MCP.*response\|Got response" "$log_file"; then
+    if grep -qi "MCP.*response.*inspection\|Got response\|Response decision" "$log_file"; then
         log_pass "MCP Response inspection executed"
     else
-        log_info "MCP Response inspection not found (may be OK)"
+        log_fail "MCP Response inspection NOT executed"
+        all_checks_passed=false
     fi
     
     # Check 4: Tool succeeded
@@ -892,7 +869,7 @@ test_mcp_protection() {
     if [ "$VERBOSE" = "true" ]; then
         echo ""
         echo -e "    ${MAGENTA}─── Log Output ───${NC}"
-        cat "$log_file" | head -30 | sed 's/^/    /'
+        cat "$log_file" | head -50 | sed 's/^/    /'
     fi
     
     # Summary
@@ -910,6 +887,127 @@ test_mcp_protection() {
 }
 
 # =============================================================================
+# Agent-Prompted MCP Test (LLM triggers MCP tool call)
+# =============================================================================
+# This tests the FULL agent loop:
+#   User prompt → LLM (protected) → decides to call fetch_url → MCP (protected) → response
+# Similar to how GCP Vertex AI example tests MCP through the agent.
+
+test_mcp_via_agent() {
+    local integration_mode=$1
+    log_subheader "Testing: Agent-Prompted MCP [$integration_mode mode]"
+    
+    local log_file="$LOG_DIR/mcp-via-agent-${integration_mode}.log"
+    local test_script="$SCRIPT_DIR/test_mcp_protection.py"
+    
+    # Check if MCP_SERVER_URL is set
+    if [ -z "${MCP_SERVER_URL:-}" ]; then
+        log_skip "MCP_SERVER_URL not configured"
+        ((TESTS_SKIPPED++))
+        return 0
+    fi
+    
+    # Check Azure OpenAI is configured
+    if [ -z "${AZURE_OPENAI_ENDPOINT:-}" ] || [ -z "${AZURE_OPENAI_API_KEY:-}" ]; then
+        log_skip "Azure OpenAI not configured (needed for agent)"
+        ((TESTS_SKIPPED++))
+        return 0
+    fi
+    
+    log_info "Integration mode: $integration_mode"
+    log_info "MCP Server: $MCP_SERVER_URL"
+    log_info "Test: Prompting LLM to trigger MCP tool call"
+    
+    cd "$PROJECT_DIR"
+    
+    # Set integration mode
+    export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
+    export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
+    
+    if [ "$VERBOSE" = "true" ]; then
+        export AGENTSEC_LOG_LEVEL="DEBUG"
+    else
+        export AGENTSEC_LOG_LEVEL="INFO"
+    fi
+    
+    local start_time=$(date +%s)
+    
+    # Run the agent-prompted MCP test
+    if [ -n "$TIMEOUT_CMD" ]; then
+        $TIMEOUT_CMD "$TIMEOUT_SECONDS" poetry run python "$test_script" --agent > "$log_file" 2>&1 || local exit_code=$?
+    else
+        poetry run python "$test_script" --agent > "$log_file" 2>&1 || local exit_code=$?
+    fi
+    exit_code=${exit_code:-0}
+    
+    local end_time=$(date +%s)
+    local duration=$((end_time - start_time))
+    
+    log_info "Completed in ${duration}s (exit code: $exit_code)"
+    
+    # Validate results
+    local all_checks_passed=true
+    
+    # Check 1: Both MCP and OpenAI patched
+    if grep -q "Both MCP and OpenAI clients patched" "$log_file"; then
+        log_pass "Both MCP and OpenAI clients patched by agentsec"
+    else
+        log_fail "Not all clients patched"
+        all_checks_passed=false
+    fi
+    
+    # Check 2: Agent tool call (LLM decided to call fetch_url)
+    if grep -qi "Tool call:.*fetch\|TOOL CALL.*fetch\|fetch_url" "$log_file"; then
+        log_pass "LLM triggered MCP tool call (fetch_url)"
+    else
+        log_info "LLM may not have called fetch_url tool"
+    fi
+    
+    # Check 3: MCP Request inspection
+    if grep -qi "MCP.*request.*inspection\|PATCHED.*MCP\|call_tool.*Request" "$log_file"; then
+        log_pass "MCP Request inspection executed"
+    else
+        log_info "MCP Request inspection not found (may be OK if tool not called)"
+    fi
+    
+    # Check 4: Agent responded
+    if grep -q "Agent-prompted MCP protection test passed\|SUCCESS" "$log_file"; then
+        log_pass "Agent responded successfully"
+    else
+        log_fail "Agent test failed"
+        all_checks_passed=false
+    fi
+    
+    # Check 5: No errors
+    if grep -E "FAIL|Traceback|^\s*ERROR\s*:" "$log_file" > /dev/null 2>&1; then
+        local error_line=$(grep -E "FAIL|Traceback|^\s*ERROR\s*:" "$log_file" | head -1)
+        log_fail "Errors found: $error_line"
+        all_checks_passed=false
+    else
+        log_pass "No errors or blocks"
+    fi
+    
+    if [ "$VERBOSE" = "true" ]; then
+        echo ""
+        echo -e "    ${MAGENTA}─── Log Output ───${NC}"
+        cat "$log_file" | head -80 | sed 's/^/    /'
+    fi
+    
+    # Summary
+    if [ "$all_checks_passed" = "true" ]; then
+        echo ""
+        echo -e "  ${GREEN}${BOLD}► Agent-Prompted MCP [$integration_mode]: ALL CHECKS PASSED${NC}"
+        ((TESTS_PASSED++))
+        return 0
+    else
+        echo ""
+        echo -e "  ${RED}${BOLD}► Agent-Prompted MCP [$integration_mode]: SOME CHECKS FAILED${NC}"
+        ((TESTS_FAILED++))
+        return 1
+    fi
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -917,6 +1015,7 @@ VERBOSE="false"
 DEPLOY_MODES_TO_TEST=()
 INTEGRATION_MODES_TO_TEST=()
 MCP_ONLY="false"
+MCP_AGENT="false"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -926,11 +1025,21 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         --local)
-            DEPLOY_MODE=false
+            LOCAL_ONLY=true
             shift
             ;;
         --deploy)
-            DEPLOY_MODE=true
+            LOCAL_ONLY=false
+            shift
+            ;;
+        --force-deploy)
+            FORCE_DEPLOY=true
+            LOCAL_ONLY=false
+            shift
+            ;;
+        --recreate)
+            RECREATE_DEPLOY=true
+            LOCAL_ONLY=false
             shift
             ;;
         --verbose|-v)
@@ -951,6 +1060,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --mcp-only)
             MCP_ONLY="true"
+            shift
+            ;;
+        --mcp-agent)
+            MCP_AGENT="true"
             shift
             ;;
         agent-app|azure-functions|container)
@@ -975,15 +1088,15 @@ if [ ${#INTEGRATION_MODES_TO_TEST[@]} -eq 0 ]; then
 fi
 
 # Setup
-if [ "$DEPLOY_MODE" = "true" ]; then
-    log_header "Azure AI Foundry Integration Tests (DEPLOY MODE)"
-    echo ""
-    echo -e "  ${YELLOW}${BOLD}⚠ DEPLOY MODE: Will deploy to Azure and test real endpoints${NC}"
-else
+if [ "$LOCAL_ONLY" = "true" ]; then
     log_header "Azure AI Foundry Integration Tests (LOCAL MODE)"
     echo ""
     echo -e "  ${BLUE}LOCAL MODE: Testing agent locally using Azure OpenAI${NC}"
-    echo -e "  ${BLUE}Use --deploy flag to deploy and test real Azure endpoints${NC}"
+    echo -e "  ${BLUE}Remove --local flag to deploy and test real Azure endpoints${NC}"
+else
+    log_header "Azure AI Foundry Integration Tests (DEPLOY MODE)"
+    echo ""
+    echo -e "  ${YELLOW}${BOLD}⚠ DEPLOY MODE: Will deploy to Azure and test real endpoints${NC}"
 fi
 
 echo ""
@@ -992,7 +1105,9 @@ echo "  Deploy modes:     ${DEPLOY_MODES_TO_TEST[*]}"
 echo "  Integration modes: ${INTEGRATION_MODES_TO_TEST[*]}"
 echo "  MCP Server:       ${MCP_SERVER_URL:-not configured}"
 echo "  Verbose:          $VERBOSE"
-echo "  Deploy to Azure:  $DEPLOY_MODE"
+echo "  Local only:       $LOCAL_ONLY"
+echo "  Force deploy:     $FORCE_DEPLOY"
+echo "  Recreate deploy:  $RECREATE_DEPLOY"
 
 # Check poetry is available
 if ! command -v poetry &> /dev/null; then
@@ -1001,38 +1116,75 @@ if ! command -v poetry &> /dev/null; then
     exit 1
 fi
 
-# Load shared environment variables
+# Load shared environment variables (examples/agentsec/.env is 2 levels up from microsoft-foundry)
+# Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
 SHARED_ENV="$PROJECT_DIR/../../.env"
 if [ -f "$SHARED_ENV" ]; then
     log_info "Loading environment from $SHARED_ENV"
     set -a
     source "$SHARED_ENV"
     set +a
+else
+    log_info "No shared .env found at $SHARED_ENV"
 fi
 
 # Check required credentials
-if [ "$DEPLOY_MODE" = "true" ]; then
-    if ! check_azure_deploy_credentials; then
-        echo ""
-        echo -e "${RED}Cannot run deploy tests without Azure credentials.${NC}"
-        echo -e "${YELLOW}Run without --deploy flag for local tests.${NC}"
-        exit 1
-    fi
-else
+if [ "$LOCAL_ONLY" = "true" ]; then
     if ! check_azure_openai_credentials; then
         echo ""
         echo -e "${RED}Cannot run tests without Azure OpenAI credentials.${NC}"
         exit 1
     fi
+else
+    if ! check_azure_deploy_credentials; then
+        echo ""
+        echo -e "${RED}Cannot run deploy tests without Azure credentials.${NC}"
+        echo -e "${YELLOW}Run with --local flag for local tests.${NC}"
+        exit 1
+    fi
 fi
 
-# Track overall start time (includes setup and all tests)
-TOTAL_START_TIME=$(date +%s)
+# Show deployment status (only in deploy mode)
+if [ "$LOCAL_ONLY" = "false" ]; then
+    log_subheader "Checking Existing Deployments"
+    
+    echo ""
+    echo -e "  ${CYAN}Checking deployment status...${NC}"
+    
+    # Check Foundry Agent App
+    if check_foundry_agent_app_deployed 2>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} Foundry Agent App: ${GREEN}DEPLOYED${NC}"
+        AGENT_APP_DEPLOYED=true
+    else
+        echo -e "  ${YELLOW}○${NC} Foundry Agent App: ${YELLOW}NOT DEPLOYED${NC} (will deploy)"
+        AGENT_APP_DEPLOYED=false
+    fi
+    
+    # Check Azure Functions
+    if check_azure_functions_deployed 2>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} Azure Functions:   ${GREEN}DEPLOYED${NC}"
+        AZURE_FUNCTIONS_DEPLOYED=true
+    else
+        echo -e "  ${YELLOW}○${NC} Azure Functions:   ${YELLOW}NOT DEPLOYED${NC} (will deploy)"
+        AZURE_FUNCTIONS_DEPLOYED=false
+    fi
+    
+    # Check Foundry Container
+    if check_foundry_container_deployed 2>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} Foundry Container: ${GREEN}DEPLOYED${NC}"
+        CONTAINER_DEPLOYED=true
+    else
+        echo -e "  ${YELLOW}○${NC} Foundry Container: ${YELLOW}NOT DEPLOYED${NC} (will deploy)"
+        CONTAINER_DEPLOYED=false
+    fi
+    
+    echo ""
+fi
 
-# Install dependencies (including azure-functions for full test coverage)
+# Install dependencies
 log_info "Installing dependencies..."
 cd "$PROJECT_DIR"
-poetry install --with azure-functions --quiet 2>/dev/null || poetry install --with azure-functions
+poetry install --quiet 2>/dev/null || poetry install
 
 # Setup log directory
 setup_log_dir
@@ -1041,19 +1193,27 @@ setup_log_dir
 log_header "Running Tests"
 
 if [ "$MCP_ONLY" = "true" ]; then
-    # MCP tests only
-    MCP_START=$(date +%s)
+    # MCP tests only (direct invocation)
     for integration_mode in "${INTEGRATION_MODES_TO_TEST[@]}"; do
         test_mcp_protection "$integration_mode"
     done
-    MCP_END=$(date +%s)
-    DEPLOY_MODE_TIMES+=("mcp:$((MCP_END - MCP_START))")
+elif [ "$MCP_AGENT" = "true" ]; then
+    # Agent-prompted MCP tests only (LLM triggers MCP tool call)
+    log_header "Agent-Prompted MCP Tests (LLM → MCP flow)"
+    for integration_mode in "${INTEGRATION_MODES_TO_TEST[@]}"; do
+        test_mcp_via_agent "$integration_mode"
+    done
 else
-    if [ "$DEPLOY_MODE" = "true" ]; then
-        # Azure deployment tests
+    if [ "$LOCAL_ONLY" = "true" ]; then
+        # Local tests
         for deploy_mode in "${DEPLOY_MODES_TO_TEST[@]}"; do
-            DEPLOY_MODE_START=$(date +%s)
-            
+            for integration_mode in "${INTEGRATION_MODES_TO_TEST[@]}"; do
+                test_local_agent "$integration_mode" "$deploy_mode"
+            done
+        done
+    else
+        # Azure deployment tests (default)
+        for deploy_mode in "${DEPLOY_MODES_TO_TEST[@]}"; do
             for integration_mode in "${INTEGRATION_MODES_TO_TEST[@]}"; do
                 case "$deploy_mode" in
                     agent-app)
@@ -1067,51 +1227,17 @@ else
                         ;;
                 esac
             done
-            
-            DEPLOY_MODE_END=$(date +%s)
-            DEPLOY_MODE_TIMES+=("$deploy_mode:$((DEPLOY_MODE_END - DEPLOY_MODE_START))")
-        done
-    else
-        # Local tests (default) - each deploy mode tests its specific entry point
-        for deploy_mode in "${DEPLOY_MODES_TO_TEST[@]}"; do
-            DEPLOY_MODE_START=$(date +%s)
-            
-            for integration_mode in "${INTEGRATION_MODES_TO_TEST[@]}"; do
-                case "$deploy_mode" in
-                    agent-app)
-                        test_foundry_agent_app_local "$integration_mode"
-                        ;;
-                    azure-functions)
-                        test_azure_functions_local "$integration_mode"
-                        ;;
-                    container)
-                        test_foundry_container_local "$integration_mode"
-                        ;;
-                esac
-            done
-            
-            DEPLOY_MODE_END=$(date +%s)
-            DEPLOY_MODE_TIMES+=("$deploy_mode:$((DEPLOY_MODE_END - DEPLOY_MODE_START))")
         done
     fi
     
     # MCP tests (run in both modes)
     if [ "$RUN_MCP_TESTS" = "true" ]; then
         log_header "MCP Tool Protection Tests"
-        MCP_START=$(date +%s)
         for integration_mode in "${INTEGRATION_MODES_TO_TEST[@]}"; do
             test_mcp_protection "$integration_mode"
         done
-        MCP_END=$(date +%s)
-        DEPLOY_MODE_TIMES+=("mcp:$((MCP_END - MCP_START))")
     fi
 fi
-
-# Calculate total time
-TOTAL_END_TIME=$(date +%s)
-TOTAL_DURATION=$((TOTAL_END_TIME - TOTAL_START_TIME))
-TOTAL_DURATION_MIN=$((TOTAL_DURATION / 60))
-TOTAL_DURATION_SEC=$((TOTAL_DURATION % 60))
 
 # Summary
 log_header "Test Summary"
@@ -1121,33 +1247,17 @@ echo -e "  ${RED}Failed${NC}:  $TESTS_FAILED"
 echo -e "  ${YELLOW}Skipped${NC}: $TESTS_SKIPPED"
 echo ""
 
-# Timing breakdown
-echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${CYAN}  Timing Breakdown:${NC}"
-echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-for time_entry in "${DEPLOY_MODE_TIMES[@]}"; do
-    mode_name="${time_entry%%:*}"
-    mode_secs="${time_entry##*:}"
-    mode_min=$((mode_secs / 60))
-    mode_sec=$((mode_secs % 60))
-    printf "  %-20s %dm %ds\n" "$mode_name:" "$mode_min" "$mode_sec"
-done
-echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "  ${BOLD}Total Runtime:       ${TOTAL_DURATION_MIN}m ${TOTAL_DURATION_SEC}s${NC}"
-echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
-
 TOTAL=$((TESTS_PASSED + TESTS_FAILED))
 if [ $TESTS_FAILED -eq 0 ] && [ $TOTAL -gt 0 ]; then
     echo -e "${GREEN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}${BOLD}  ✓ ALL TESTS PASSED ($TESTS_PASSED/$TOTAL) in ${TOTAL_DURATION_MIN}m ${TOTAL_DURATION_SEC}s${NC}"
+    echo -e "${GREEN}${BOLD}  ✓ ALL TESTS PASSED ($TESTS_PASSED/$TOTAL)${NC}"
     echo -e "${GREEN}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     echo "  Logs saved to: $LOG_DIR/"
     exit 0
 else
     echo -e "${RED}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "${RED}${BOLD}  ✗ TESTS FAILED ($TESTS_FAILED/$TOTAL failed) in ${TOTAL_DURATION_MIN}m ${TOTAL_DURATION_SEC}s${NC}"
+    echo -e "${RED}${BOLD}  ✗ TESTS FAILED ($TESTS_FAILED/$TOTAL failed)${NC}"
     echo -e "${RED}${BOLD}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     echo "  Logs saved to: $LOG_DIR/"

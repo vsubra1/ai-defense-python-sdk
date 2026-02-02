@@ -30,11 +30,12 @@ ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 
 cd "$DEPLOY_DIR"
 
-# Load environment variables from shared examples/.env
-EXAMPLES_DIR="$(cd "$ROOT_DIR/.." && pwd)"
-if [ -f "$EXAMPLES_DIR/.env" ]; then
+# Load environment variables from shared examples/agentsec/.env
+# Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
+AGENTSEC_EXAMPLES_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
+if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
     set -a
-    source "$EXAMPLES_DIR/.env"
+    source "$AGENTSEC_EXAMPLES_DIR/.env"
     set +a
 fi
 
@@ -62,15 +63,16 @@ echo ""
 echo "Setting Azure subscription..."
 az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 
-# Copy aidefense SDK source to the deployment directory (includes agentsec at aidefense/runtime/agentsec)
+# Copy agentsec source to the deployment directory (it's not on PyPI)
 echo "Copying aidefense SDK source..."
-AIDEFENSE_SRC="$ROOT_DIR/../../../../aidefense"
+# Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/ -> examples/ -> repo-root/aidefense/
+AIDEFENSE_SRC="$AGENTSEC_EXAMPLES_DIR/../../aidefense"
 if [ -d "$AIDEFENSE_SRC" ]; then
     rm -rf "$DEPLOY_DIR/aidefense" 2>/dev/null || true
-    cp -R "$AIDEFENSE_SRC" "$DEPLOY_DIR/"
-    echo "Copied aidefense from $AIDEFENSE_SRC"
+    cp -R "$AIDEFENSE_SRC" "$DEPLOY_DIR/aidefense"
+    echo "Copied aidefense from $AIDEFENSE_SRC to $DEPLOY_DIR/aidefense"
 else
-    echo "ERROR: aidefense SDK source not found at $AIDEFENSE_SRC"
+    echo "ERROR: aidefense source not found at $AIDEFENSE_SRC"
     exit 1
 fi
 
@@ -117,6 +119,8 @@ az functionapp config appsettings set \
     --settings \
         "AZURE_OPENAI_ENDPOINT=$AZURE_OPENAI_ENDPOINT" \
         "AZURE_OPENAI_API_KEY=$AZURE_OPENAI_API_KEY" \
+        "AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4o}" \
+        "AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}" \
         "AGENTSEC_LLM_INTEGRATION_MODE=${AGENTSEC_LLM_INTEGRATION_MODE:-api}" \
         "AGENTSEC_MCP_INTEGRATION_MODE=${AGENTSEC_MCP_INTEGRATION_MODE:-api}" \
         "AGENTSEC_API_MODE_LLM=${AGENTSEC_API_MODE_LLM:-monitor}" \

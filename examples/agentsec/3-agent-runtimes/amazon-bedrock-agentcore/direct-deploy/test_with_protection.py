@@ -42,13 +42,11 @@ agentsec.protect(
     api_mode_llm_endpoint=os.getenv("AI_DEFENSE_API_MODE_LLM_ENDPOINT"),
     api_mode_llm_api_key=os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
     api_mode_fail_open_llm=True,
+    # Note: AgentCore operations use the Bedrock gateway configuration
     providers={
         "bedrock": {
             "gateway_url": os.getenv("AGENTSEC_BEDROCK_GATEWAY_URL"),
             "gateway_api_key": os.getenv("AGENTSEC_BEDROCK_GATEWAY_API_KEY"),
-        },
-        "agentcore": {
-            "gateway_url": os.getenv("AGENTSEC_AGENTCORE_GATEWAY_URL"),
         },
     },
     auto_dotenv=False,
