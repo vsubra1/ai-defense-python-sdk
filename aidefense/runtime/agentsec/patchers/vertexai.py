@@ -324,11 +324,14 @@ class GoogleStreamingInspectionWrapper:
             chunk = next(self._original)
             self._chunks.append(chunk)
             
-            # Extract text from chunk
+            # Extract text from chunk, with size limit to prevent memory issues
             from ._google_common import extract_streaming_chunk_text
             text = extract_streaming_chunk_text(chunk)
             if text:
-                self._collected_text.append(text)
+                current_size = sum(len(t) for t in self._collected_text)
+                if current_size < MAX_STREAMING_BUFFER_SIZE:
+                    remaining_capacity = MAX_STREAMING_BUFFER_SIZE - current_size
+                    self._collected_text.append(text[:remaining_capacity])
             
             return chunk
         except StopIteration:
@@ -384,11 +387,14 @@ class AsyncGoogleStreamingInspectionWrapper:
             chunk = await self._original.__anext__()
             self._chunks.append(chunk)
             
-            # Extract text from chunk
+            # Extract text from chunk, with size limit to prevent memory issues
             from ._google_common import extract_streaming_chunk_text
             text = extract_streaming_chunk_text(chunk)
             if text:
-                self._collected_text.append(text)
+                current_size = sum(len(t) for t in self._collected_text)
+                if current_size < MAX_STREAMING_BUFFER_SIZE:
+                    remaining_capacity = MAX_STREAMING_BUFFER_SIZE - current_size
+                    self._collected_text.append(text[:remaining_capacity])
             
             return chunk
         except StopAsyncIteration:

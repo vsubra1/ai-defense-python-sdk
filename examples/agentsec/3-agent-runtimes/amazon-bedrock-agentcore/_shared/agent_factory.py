@@ -71,14 +71,11 @@ def configure_agentsec():
         api_mode_fail_open_mcp=os.getenv("AGENTSEC_API_MODE_FAIL_OPEN_MCP", "true").lower() == "true",
         
         # Gateway Mode Configuration (when integration_mode="gateway")
+        # Note: AgentCore operations use the Bedrock gateway configuration
         providers={
             "bedrock": {
                 "gateway_url": os.getenv("AGENTSEC_BEDROCK_GATEWAY_URL"),
                 "gateway_api_key": os.getenv("AGENTSEC_BEDROCK_GATEWAY_API_KEY"),
-            },
-            "agentcore": {
-                "gateway_url": os.getenv("AGENTSEC_AGENTCORE_GATEWAY_URL"),
-                # No API key needed - AgentCore gateway uses AWS Sig V4 authentication
             },
         },
         gateway_mode_mcp_url=os.getenv("AGENTSEC_MCP_GATEWAY_URL"),

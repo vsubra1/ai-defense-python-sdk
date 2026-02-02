@@ -19,6 +19,7 @@ Usage:
 
 from .config import load_config
 from .providers import create_provider, PROVIDERS
+from .security import validate_url, URLValidationError, safe_fetch_url_wrapper
 
-__all__ = ['load_config', 'create_provider', 'PROVIDERS']
+__all__ = ['load_config', 'create_provider', 'PROVIDERS', 'validate_url', 'URLValidationError', 'safe_fetch_url_wrapper']
 

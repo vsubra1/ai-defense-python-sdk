@@ -33,15 +33,30 @@ from . import _state
 _protect_lock = threading.Lock()
 from .config import load_env_config, VALID_MODES, VALID_GATEWAY_MODES
 from .decision import Decision
-from .exceptions import SecurityPolicyError
+from .exceptions import (
+    AgentsecError,
+    ConfigurationError,
+    ValidationError,
+    InspectionTimeoutError,
+    InspectionNetworkError,
+    SecurityPolicyError,
+)
 from ._logging import setup_logging
-from ._context import skip_inspection, no_inspection
+from ._context import skip_inspection, no_inspection, set_metadata
 
 __all__ = [
     "protect",
     "get_patched_clients",
+    "set_metadata",
     "Decision",
+    # Exceptions
+    "AgentsecError",
+    "ConfigurationError",
+    "ValidationError",
+    "InspectionTimeoutError",
+    "InspectionNetworkError",
     "SecurityPolicyError",
+    # Context managers
     "skip_inspection",
     "no_inspection",
 ]
@@ -131,6 +146,7 @@ def protect(
     api_mode_fail_open_llm: Optional[bool] = None,  # AGENTSEC_API_MODE_FAIL_OPEN_LLM
     api_mode_fail_open_mcp: Optional[bool] = None,  # AGENTSEC_API_MODE_FAIL_OPEN_MCP
     api_mode_llm_rules: Optional[List[Any]] = None,  # AGENTSEC_LLM_RULES
+    api_mode_llm_entity_types: Optional[List[str]] = None,  # AGENTSEC_LLM_ENTITY_TYPES (new)
     # Gateway mode configuration
     gateway_mode_llm: Optional[str] = None,  # AGENTSEC_GATEWAY_MODE_LLM (off/on)
     gateway_mode_mcp: Optional[str] = None,  # AGENTSEC_GATEWAY_MODE_MCP (off/on)
@@ -140,6 +156,18 @@ def protect(
     gateway_mode_fail_open_mcp: Optional[bool] = None,  # AGENTSEC_GATEWAY_MODE_FAIL_OPEN_MCP
     # Provider-specific gateway configuration
     providers: Optional[dict] = None,  # Per-provider gateway config
+    # Retry configuration (new)
+    retry_total: Optional[int] = None,  # AGENTSEC_RETRY_TOTAL
+    retry_backoff: Optional[float] = None,  # AGENTSEC_RETRY_BACKOFF_FACTOR
+    retry_status_codes: Optional[List[int]] = None,  # AGENTSEC_RETRY_STATUS_FORCELIST
+    # Connection pool configuration (new)
+    timeout: Optional[int] = None,  # AGENTSEC_TIMEOUT (seconds)
+    pool_max_connections: Optional[int] = None,  # AGENTSEC_POOL_MAX_CONNECTIONS
+    pool_max_keepalive: Optional[int] = None,  # AGENTSEC_POOL_MAX_KEEPALIVE
+    # Logger configuration (new)
+    custom_logger: Optional[logging.Logger] = None,  # Custom logger instance
+    log_file: Optional[str] = None,  # AGENTSEC_LOG_FILE
+    log_format: Optional[str] = None,  # AGENTSEC_LOG_FORMAT
 ) -> None:
     """
     Enable agentsec protection for LLM and MCP interactions.
@@ -211,6 +239,8 @@ def protect(
             If None, reads from AGENTSEC_API_MODE_FAIL_OPEN_MCP env var (default: True)
         api_mode_llm_rules: Rules to enable for LLM inspection (e.g., ["jailbreak", "prompt_injection"])
             If None, reads from AGENTSEC_LLM_RULES env var (JSON array or comma-separated)
+        api_mode_llm_entity_types: Entity types to filter for (e.g., ["EMAIL", "PHONE_NUMBER"])
+            If None, reads from AGENTSEC_LLM_ENTITY_TYPES env var (comma-separated)
         
         Gateway Mode:
         gateway_mode_llm: Mode for LLM gateway - "off" or "on"
@@ -227,6 +257,25 @@ def protect(
             If None, reads from AGENTSEC_GATEWAY_MODE_FAIL_OPEN_MCP env var (default: True)
         providers: Per-provider gateway and API configuration dict
             Example: {"openai": {"gateway_url": "...", "gateway_api_key": "..."}}
+        
+        Advanced Configuration (new):
+        retry_total: Total number of retry attempts (default: 1, no retry)
+            If None, reads from AGENTSEC_RETRY_TOTAL env var
+        retry_backoff: Exponential backoff factor in seconds (default: 0, no backoff)
+            If None, reads from AGENTSEC_RETRY_BACKOFF_FACTOR env var
+        retry_status_codes: HTTP status codes to retry on (default: [500, 502, 503, 504])
+            If None, reads from AGENTSEC_RETRY_STATUS_FORCELIST env var (comma-separated)
+        timeout: Timeout for inspection API calls in seconds (default: 1)
+            If None, reads from AGENTSEC_TIMEOUT env var
+        pool_max_connections: Maximum connections in the connection pool (default: 100)
+            If None, reads from AGENTSEC_POOL_MAX_CONNECTIONS env var
+        pool_max_keepalive: Maximum keepalive connections (default: 20)
+            If None, reads from AGENTSEC_POOL_MAX_KEEPALIVE env var
+        custom_logger: Custom logger instance to use instead of the internal logger
+        log_file: Log file path for file logging
+            If None, reads from AGENTSEC_LOG_FILE env var
+        log_format: Log format - "text" or "json" (default: "text")
+            If None, reads from AGENTSEC_LOG_FORMAT env var
         
     Raises:
         ValueError: If any mode is not one of "off", "monitor", "enforce"
@@ -273,6 +322,7 @@ def protect(
             api_mode_fail_open_llm=api_mode_fail_open_llm,
             api_mode_fail_open_mcp=api_mode_fail_open_mcp,
             api_mode_llm_rules=api_mode_llm_rules,
+            api_mode_llm_entity_types=api_mode_llm_entity_types,
             gateway_mode_llm=gateway_mode_llm,
             gateway_mode_mcp=gateway_mode_mcp,
             gateway_mode_mcp_url=gateway_mode_mcp_url,
@@ -280,6 +330,15 @@ def protect(
             gateway_mode_fail_open_llm=gateway_mode_fail_open_llm,
             gateway_mode_fail_open_mcp=gateway_mode_fail_open_mcp,
             providers=providers,
+            retry_total=retry_total,
+            retry_backoff=retry_backoff,
+            retry_status_codes=retry_status_codes,
+            timeout=timeout,
+            pool_max_connections=pool_max_connections,
+            pool_max_keepalive=pool_max_keepalive,
+            custom_logger=custom_logger,
+            log_file=log_file,
+            log_format=log_format,
         )
 
 
@@ -297,6 +356,7 @@ def _protect_impl(
     api_mode_fail_open_llm: Optional[bool],
     api_mode_fail_open_mcp: Optional[bool],
     api_mode_llm_rules: Optional[List[Any]],
+    api_mode_llm_entity_types: Optional[List[str]],
     gateway_mode_llm: Optional[str],
     gateway_mode_mcp: Optional[str],
     gateway_mode_mcp_url: Optional[str],
@@ -304,6 +364,15 @@ def _protect_impl(
     gateway_mode_fail_open_llm: Optional[bool],
     gateway_mode_fail_open_mcp: Optional[bool],
     providers: Optional[dict],
+    retry_total: Optional[int],
+    retry_backoff: Optional[float],
+    retry_status_codes: Optional[List[int]],
+    timeout: Optional[int],
+    pool_max_connections: Optional[int],
+    pool_max_keepalive: Optional[int],
+    custom_logger: Optional[logging.Logger],
+    log_file: Optional[str],
+    log_format: Optional[str],
 ) -> None:
     """Internal implementation of protect(), called under lock."""
     # Step 1: Auto-load .env file (before reading env vars)
@@ -388,7 +457,7 @@ def _protect_impl(
     provider_gateway_config = {}
     provider_api_config = {}
     
-    for provider in ["openai", "azure_openai", "vertexai", "bedrock", "agentcore", "google_genai"]:
+    for provider in ["openai", "azure_openai", "vertexai", "bedrock", "google_genai"]:
         # Gateway config from providers parameter or env
         if providers and provider in providers:
             provider_config = providers[provider]
@@ -409,11 +478,45 @@ def _protect_impl(
     if api_mode_llm_rules is None:
         api_mode_llm_rules = env_config.get("llm_rules")
     
+    # Get LLM entity types from parameter or env config (new)
+    if api_mode_llm_entity_types is None:
+        api_mode_llm_entity_types = env_config.get("llm_entity_types")
+    
+    # Get metadata from env config (new)
+    metadata_user = env_config.get("user")
+    metadata_src_app = env_config.get("src_app")
+    metadata_client_transaction_id = env_config.get("client_transaction_id")
+    
+    # Get retry configuration from parameter or env config (new)
+    if retry_total is None:
+        retry_total = env_config.get("retry_total")
+    if retry_backoff is None:
+        retry_backoff = env_config.get("retry_backoff_factor")
+    if retry_status_codes is None:
+        retry_status_codes = env_config.get("retry_status_forcelist")
+    
+    # Get pool configuration from parameter or env config (new)
+    if pool_max_connections is None:
+        pool_max_connections = env_config.get("pool_max_connections")
+    if pool_max_keepalive is None:
+        pool_max_keepalive = env_config.get("pool_max_keepalive")
+    
+    # Get timeout from parameter or env config (new)
+    if timeout is None:
+        timeout = env_config.get("timeout")
+    
+    # Get logger config from parameter or env config (new)
+    if log_file is None:
+        log_file = env_config.get("log_file")
+    if log_format is None:
+        log_format = env_config.get("log_format")
+    
     # Handle all-off mode - minimal initialization
     if api_mode_llm == "off" and api_mode_mcp == "off":
         _state.set_state(
             initialized=True, 
-            llm_rules=None, 
+            llm_rules=None,
+            llm_entity_types=None,
             api_mode_llm="off",
             api_mode_mcp="off",
             llm_integration_mode=llm_integration_mode,
@@ -432,6 +535,19 @@ def _protect_impl(
             gateway_mode_fail_open_mcp=gateway_mode_fail_open_mcp,
             provider_gateway_config=provider_gateway_config,
             provider_api_config=provider_api_config,
+            # New parameters
+            metadata_user=metadata_user,
+            metadata_src_app=metadata_src_app,
+            metadata_client_transaction_id=metadata_client_transaction_id,
+            retry_total=retry_total,
+            retry_backoff=retry_backoff,
+            retry_status_codes=retry_status_codes,
+            pool_max_connections=pool_max_connections,
+            pool_max_keepalive=pool_max_keepalive,
+            timeout=timeout,
+            log_file=log_file,
+            log_format=log_format,
+            custom_logger=custom_logger,
         )
         logger.debug("agentsec disabled (all modes=off)")
         return
@@ -447,7 +563,8 @@ def _protect_impl(
     # Store state BEFORE patching (so patchers can access config)
     _state.set_state(
         initialized=True, 
-        llm_rules=api_mode_llm_rules, 
+        llm_rules=api_mode_llm_rules,
+        llm_entity_types=api_mode_llm_entity_types,
         api_mode_llm=api_mode_llm,
         api_mode_mcp=api_mode_mcp,
         llm_integration_mode=llm_integration_mode,
@@ -466,6 +583,19 @@ def _protect_impl(
         gateway_mode_fail_open_mcp=gateway_mode_fail_open_mcp,
         provider_gateway_config=provider_gateway_config,
         provider_api_config=provider_api_config,
+        # New parameters
+        metadata_user=metadata_user,
+        metadata_src_app=metadata_src_app,
+        metadata_client_transaction_id=metadata_client_transaction_id,
+        retry_total=retry_total,
+        retry_backoff=retry_backoff,
+        retry_status_codes=retry_status_codes,
+        pool_max_connections=pool_max_connections,
+        pool_max_keepalive=pool_max_keepalive,
+        timeout=timeout,
+        log_file=log_file,
+        log_format=log_format,
+        custom_logger=custom_logger,
     )
     
     # Apply client patches

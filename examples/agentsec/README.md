@@ -30,6 +30,7 @@ Comprehensive examples demonstrating how to secure AI agents with **Cisco AI Def
 
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Environment Variables Quick Reference](#environment-variables-quick-reference)
 - [Overview](#overview)
 - [Core Concepts](#core-concepts)
 - [Integration Pattern](#integration-pattern)
@@ -38,6 +39,7 @@ Comprehensive examples demonstrating how to secure AI agents with **Cisco AI Def
 - [2. Agent Frameworks](#2-agent-frameworks)
 - [3. Agent Runtimes](#3-agent-runtimes)
 - [Configuration](#configuration)
+- [Advanced Usage](#advanced-usage)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 
@@ -97,7 +99,7 @@ The `.env.example` file contains all variables organized by which examples need 
 | Provider | API Mode Variables | Gateway Mode Variables |
 |----------|-------------------|----------------------|
 | **OpenAI** | `OPENAI_API_KEY` | `AGENTSEC_OPENAI_GATEWAY_URL`, `AGENTSEC_OPENAI_GATEWAY_API_KEY` |
-| **Azure OpenAI** | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT_NAME` | `AGENTSEC_AZURE_OPENAI_GATEWAY_URL`, `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` |
+| **Azure OpenAI** | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_VERSION` | `AGENTSEC_AZURE_OPENAI_GATEWAY_URL`, `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` |
 | **AWS Bedrock** | `AWS_REGION` + auth (`AWS_PROFILE` or keys) | `AGENTSEC_BEDROCK_GATEWAY_URL` + AWS auth |
 | **GCP Vertex AI** | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` + ADC | `AGENTSEC_VERTEXAI_GATEWAY_URL` + ADC |
 | **MCP Tools** | `MCP_SERVER_URL`, `MCP_TIMEOUT` + MCP API vars | `AGENTSEC_MCP_GATEWAY_URL` |
@@ -570,6 +572,26 @@ Copy `.env.example` to `.env` and configure:
 | `AGENTSEC_MCP_GATEWAY_URL` | Gateway + MCP | MCP gateway URL |
 | `AGENTSEC_MCP_GATEWAY_API_KEY` | Gateway + MCP | MCP gateway API key |
 
+#### Advanced Configuration (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGENTSEC_TIMEOUT` | 30000 | API request timeout in milliseconds |
+| `AGENTSEC_RETRY_TOTAL` | 3 | Maximum retry attempts for failed requests |
+| `AGENTSEC_RETRY_BACKOFF_FACTOR` | 0.5 | Exponential backoff multiplier |
+| `AGENTSEC_RETRY_STATUS_FORCELIST` | 429,500,502,503,504 | HTTP status codes to retry |
+| `AGENTSEC_POOL_MAX_CONNECTIONS` | 10 | Maximum connections in pool |
+| `AGENTSEC_POOL_MAX_KEEPALIVE` | 5 | Maximum keepalive connections |
+| `AGENTSEC_LLM_ENTITY_TYPES` | (all) | Comma-separated entity types to filter |
+
+#### Metadata Configuration (Optional)
+
+| Variable | Description |
+|----------|-------------|
+| `AGENTSEC_USER` | Default user identifier for inspection context |
+| `AGENTSEC_SRC_APP` | Default source application name |
+| `AGENTSEC_CLIENT_TRANSACTION_ID` | Default transaction ID prefix |
+
 ### Provider Credentials
 
 <details>
@@ -630,6 +652,37 @@ GOOGLE_AI_SDK=vertexai      # Legacy SDK (default)
 
 </details>
 
+### Programmatic Configuration
+
+All environment variables can also be set via `protect()` parameters:
+
+```python
+from aidefense.runtime import agentsec
+
+agentsec.protect(
+    # Core modes
+    api_mode_llm="enforce",
+    api_mode_mcp="monitor",
+    
+    # Advanced: Retry policy
+    retry_total=5,
+    retry_backoff=1.0,
+    retry_status_codes=[429, 500, 502, 503, 504],
+    
+    # Advanced: Connection pool
+    timeout=60000,  # 60 seconds
+    pool_max_connections=20,
+    pool_max_keepalive=10,
+    
+    # Advanced: Entity filtering
+    api_mode_llm_entity_types=["pii", "secrets"],
+    
+    # Advanced: Custom logger
+    custom_logger=my_logger,
+    log_file="/var/log/agentsec.log",
+)
+```
+
 ### YAML Config (Agent Frameworks)
 
 Each agent framework has config files in `config/`:
@@ -650,6 +703,66 @@ Select config via flag:
 ./scripts/run.sh --azure     # Uses config/config-azure.yaml
 ./scripts/run.sh --vertex    # Uses config/config-vertex.yaml
 ./scripts/run.sh --openai    # Uses config/config-openai.yaml
+```
+
+---
+
+## Advanced Usage
+
+### Error Handling
+
+agentsec provides typed exceptions for granular error handling:
+
+```python
+from aidefense.runtime.agentsec import (
+    AgentsecError,           # Base exception
+    SecurityPolicyError,     # Policy violation (blocked content)
+    InspectionTimeoutError,  # API timeout
+    InspectionNetworkError,  # Network/connection failure
+    ConfigurationError,      # Invalid configuration
+    ValidationError,         # Input validation failure
+)
+
+try:
+    response = client.chat.completions.create(...)
+except SecurityPolicyError as e:
+    print(f"Blocked: {e.decision.reasons}")
+except InspectionTimeoutError as e:
+    print(f"Timeout after {e.timeout_ms}ms")
+except InspectionNetworkError:
+    print("Network error - check connectivity")
+```
+
+### Request Context
+
+Add metadata to inspection requests for better tracking:
+
+```python
+from aidefense.runtime.agentsec import set_metadata
+
+# Set context before LLM calls
+set_metadata(
+    user="user@example.com",
+    src_app="my-chatbot",
+    client_transaction_id="txn-12345",
+    custom_field="any-value",
+)
+```
+
+### Inspection Results
+
+The `Decision` object includes detailed inspection results:
+
+```python
+decision = inspector.inspect_conversation(messages, metadata)
+
+decision.action          # "allow", "block", "sanitize", "monitor_only"
+decision.is_safe         # True if action != "block"
+decision.reasons         # List of reasons
+decision.severity        # "low", "medium", "high", "critical"
+decision.classifications # ["pii", "prompt_injection", ...]
+decision.event_id        # Unique event identifier for tracking
+decision.explanation     # Human-readable explanation
 ```
 
 ---

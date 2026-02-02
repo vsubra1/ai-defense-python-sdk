@@ -3,7 +3,11 @@
 import pytest
 
 from aidefense.runtime.agentsec.inspectors.api_llm import LLMInspector
-from aidefense.runtime.agentsec.exceptions import SecurityPolicyError
+from aidefense.runtime.agentsec.exceptions import (
+    SecurityPolicyError,
+    InspectionTimeoutError,
+    InspectionNetworkError,
+)
 
 
 # Check if pytest-httpx is available
@@ -108,7 +112,7 @@ class TestLLMInspectorHTTPX:
         assert decision.action == "allow"
 
     def test_timeout_handling_fail_open_false(self, httpx_mock: "HTTPXMock"):
-        """Test timeout handling with fail_open=False raises error."""
+        """Test timeout handling with fail_open=False raises InspectionTimeoutError."""
         import httpx
         
         httpx_mock.add_exception(
@@ -123,7 +127,8 @@ class TestLLMInspectorHTTPX:
             fail_open=False,
         )
         
-        with pytest.raises(SecurityPolicyError):
+        # Should raise InspectionTimeoutError for timeout errors
+        with pytest.raises(InspectionTimeoutError):
             inspector.inspect_conversation(
                 messages=[{"role": "user", "content": "test"}],
                 metadata={},

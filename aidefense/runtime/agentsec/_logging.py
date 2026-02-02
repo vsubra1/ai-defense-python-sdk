@@ -22,6 +22,29 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+# Module-level storage for custom logger
+_custom_logger_instance: Optional[logging.Logger] = None
+
+# Track file handlers for cleanup
+_file_handlers: list = []
+
+
+def _set_custom_logger(logger: logging.Logger) -> None:
+    """Set a custom logger instance for agentsec to use."""
+    global _custom_logger_instance
+    _custom_logger_instance = logger
+
+
+def _get_custom_logger() -> Optional[logging.Logger]:
+    """Get the custom logger instance if one is set."""
+    return _custom_logger_instance
+
+
+def _clear_custom_logger() -> None:
+    """Clear the custom logger instance. Useful for testing."""
+    global _custom_logger_instance
+    _custom_logger_instance = None
+
 
 class JSONFormatter(logging.Formatter):
     """JSON log formatter for structured logging pipelines."""
@@ -70,6 +93,7 @@ def setup_logging(
     format_type: Optional[str] = None,
     log_file: Optional[str] = None,
     redact: bool = True,
+    custom_logger: Optional[logging.Logger] = None,
 ) -> logging.Logger:
     """
     Configure agentsec logging based on parameters or environment.
@@ -79,10 +103,27 @@ def setup_logging(
         format_type: Log format (json, text). Defaults to env or text.
         log_file: Optional file path for logging. Defaults to env or None.
         redact: Whether to apply log redaction. Defaults to True.
+        custom_logger: Optional custom logger instance to use instead of creating one.
+            If provided, no handlers will be added; the caller is responsible for
+            configuring the logger.
     
     Returns:
         Configured logger instance.
+    
+    Example:
+        # Use custom logger
+        my_logger = logging.getLogger("my_app.agentsec")
+        my_logger.setLevel(logging.DEBUG)
+        my_logger.addHandler(logging.StreamHandler())
+        
+        setup_logging(custom_logger=my_logger)
     """
+    # If custom logger is provided, store it for use and return
+    if custom_logger is not None:
+        # Store reference for get_logger() to use
+        _set_custom_logger(custom_logger)
+        return custom_logger
+    
     logger = logging.getLogger("aidefense.runtime.agentsec")
     
     # Avoid duplicate handlers on repeated calls
@@ -127,6 +168,8 @@ def setup_logging(
         file_handler = logging.FileHandler(file_path)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
+        # Track file handler for proper cleanup
+        _file_handlers.append(file_handler)
     
     # Prevent propagation to root logger
     logger.propagate = False
@@ -135,7 +178,20 @@ def setup_logging(
 
 
 def get_logger() -> logging.Logger:
-    """Get the agentsec logger, creating it if needed."""
+    """
+    Get the agentsec logger, creating it if needed.
+    
+    If a custom logger was set via setup_logging(custom_logger=...), that
+    logger will be returned instead of the default agentsec logger.
+    
+    Returns:
+        The configured logger instance.
+    """
+    # Return custom logger if one is set
+    custom = _get_custom_logger()
+    if custom is not None:
+        return custom
+    
     logger = logging.getLogger("aidefense.runtime.agentsec")
     if not logger.handlers:
         setup_logging()
@@ -167,3 +223,25 @@ def get_context_logger(**context: Any) -> LogAdapter:
         LogAdapter instance with context bound.
     """
     return LogAdapter(get_logger(), context)
+
+
+def cleanup_logging() -> None:
+    """
+    Clean up logging resources.
+    
+    Closes all file handlers and removes them from the logger.
+    This should be called during shutdown to ensure proper cleanup.
+    """
+    global _file_handlers
+    
+    logger = logging.getLogger("aidefense.runtime.agentsec")
+    
+    for handler in _file_handlers:
+        try:
+            handler.close()
+            logger.removeHandler(handler)
+        except Exception:
+            pass  # Best effort cleanup
+    
+    _file_handlers = []
+    _clear_custom_logger()

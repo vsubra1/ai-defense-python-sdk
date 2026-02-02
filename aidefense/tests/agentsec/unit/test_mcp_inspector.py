@@ -7,7 +7,11 @@ import httpx
 
 from aidefense.runtime.agentsec.inspectors.api_mcp import MCPInspector
 from aidefense.runtime.agentsec.decision import Decision
-from aidefense.runtime.agentsec.exceptions import SecurityPolicyError
+from aidefense.runtime.agentsec.exceptions import (
+    SecurityPolicyError,
+    InspectionTimeoutError,
+    InspectionNetworkError,
+)
 
 
 class TestMCPInspectorConstructor:
@@ -81,7 +85,8 @@ class TestMCPInspectorConstructor:
             assert inspector.timeout_ms == 1000
             assert inspector.retry_attempts == 1
             assert inspector.fail_open is True
-            assert inspector._request_id_counter == 0
+            # _request_id_counter is now itertools.count() for thread safety
+            assert next(inspector._request_id_counter) == 1
             inspector.close()
 
     def test_http_client_created(self):
@@ -390,7 +395,7 @@ class TestMCPInspectorInspectRequest:
         inspector.close()
 
     def test_inspect_request_api_error_fail_open_false(self):
-        """Test inspect_request raises SecurityPolicyError when fail_open=False."""
+        """Test inspect_request raises InspectionNetworkError when fail_open=False."""
         inspector = MCPInspector(
             api_key="test-key",
             endpoint="https://test.example.com",
@@ -398,14 +403,13 @@ class TestMCPInspectorInspectRequest:
         )
         
         with patch.object(inspector._sync_client, 'post', side_effect=httpx.ConnectError("Connection failed")):
-            with pytest.raises(SecurityPolicyError) as exc_info:
+            # Should raise InspectionNetworkError for network errors
+            with pytest.raises(InspectionNetworkError):
                 inspector.inspect_request(
                     tool_name="test_tool",
                     arguments={},
                     metadata={},
                 )
-            
-            assert exc_info.value.decision.action == "block"
         
         inspector.close()
 

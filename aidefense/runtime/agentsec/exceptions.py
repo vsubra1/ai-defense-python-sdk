@@ -16,13 +16,104 @@
 
 """Custom exceptions for agentsec."""
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .decision import Decision
 
 
-class SecurityPolicyError(Exception):
+class AgentsecError(Exception):
+    """
+    Base exception for all agentsec errors.
+    
+    All agentsec-specific exceptions inherit from this class,
+    allowing users to catch all agentsec errors with a single except clause.
+    
+    Example:
+        try:
+            agentsec.protect()
+            # ... use protected clients ...
+        except AgentsecError as e:
+            print(f"Agentsec error: {e}")
+    """
+    pass
+
+
+class ConfigurationError(AgentsecError):
+    """
+    Raised when agentsec configuration is invalid.
+    
+    This exception is raised during protect() initialization
+    if configuration parameters or environment variables are invalid.
+    
+    Example:
+        try:
+            agentsec.protect(retry_total=-1)  # Invalid!
+        except ConfigurationError as e:
+            print(f"Configuration error: {e}")
+    """
+    pass
+
+
+class ValidationError(AgentsecError):
+    """
+    Raised when input validation fails.
+    
+    This exception is raised when invalid input is passed to
+    inspection methods (e.g., empty messages, invalid metadata).
+    
+    Example:
+        try:
+            inspector.inspect_conversation([])  # Empty messages!
+        except ValidationError as e:
+            print(f"Validation error: {e}")
+    """
+    pass
+
+
+class InspectionTimeoutError(AgentsecError):
+    """
+    Raised when the inspection API times out.
+    
+    This exception is raised when fail_open=False and the
+    inspection API request times out.
+    
+    Attributes:
+        timeout_ms: The timeout value that was exceeded (in milliseconds)
+    
+    Example:
+        try:
+            decision = inspector.inspect_conversation(messages, metadata)
+        except InspectionTimeoutError as e:
+            print(f"Inspection timed out: {e}")
+    """
+    
+    def __init__(self, message: str, timeout_ms: Optional[int] = None):
+        super().__init__(message)
+        self.timeout_ms = timeout_ms
+    
+    def __repr__(self) -> str:
+        return f"InspectionTimeoutError({self.args[0]!r}, timeout_ms={self.timeout_ms!r})"
+
+
+class InspectionNetworkError(AgentsecError):
+    """
+    Raised when a network error occurs during inspection.
+    
+    This exception is raised when fail_open=False and a network
+    error occurs while connecting to the inspection API (e.g.,
+    connection refused, DNS resolution failure).
+    
+    Example:
+        try:
+            decision = inspector.inspect_conversation(messages, metadata)
+        except InspectionNetworkError as e:
+            print(f"Network error during inspection: {e}")
+    """
+    pass
+
+
+class SecurityPolicyError(AgentsecError):
     """
     Raised when a security policy blocks a request or response.
     
@@ -32,9 +123,16 @@ class SecurityPolicyError(Exception):
     Attributes:
         decision: The Decision object that triggered this error
         message: Human-readable description of why the request was blocked
+    
+    Example:
+        try:
+            response = client.chat.completions.create(...)
+        except SecurityPolicyError as e:
+            print(f"Blocked: {e}")
+            print(f"Decision: {e.decision}")
     """
     
-    def __init__(self, decision: "Decision", message: str | None = None):
+    def __init__(self, decision: "Decision", message: Optional[str] = None):
         self.decision = decision
         self.message = message or self._format_message(decision)
         super().__init__(self.message)
