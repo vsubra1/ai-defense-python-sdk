@@ -49,58 +49,80 @@ if _shared_env.exists():
 GOOGLE_AI_SDK = os.getenv("GOOGLE_AI_SDK", "vertexai")  # "vertexai" or "google_genai"
 
 # =============================================================================
-# Configure agentsec protection (BEFORE importing any AI library)
+# Configure agentsec protection (LAZY - initialized on first use)
 # =============================================================================
-from aidefense.runtime import agentsec
+# Track if agentsec has been initialized
+_agentsec_initialized = False
 
-# Build provider config based on which SDK we're using
-providers_config = {
-    "vertexai": {
-        "gateway_url": os.getenv("AGENTSEC_VERTEXAI_GATEWAY_URL"),
-        "gateway_api_key": os.getenv("AGENTSEC_VERTEXAI_GATEWAY_API_KEY"),
-    },
-    "google_genai": {
-        "gateway_url": os.getenv("AGENTSEC_GOOGLE_GENAI_GATEWAY_URL") or os.getenv("AGENTSEC_VERTEXAI_GATEWAY_URL"),
-        "gateway_api_key": os.getenv("AGENTSEC_GOOGLE_GENAI_GATEWAY_API_KEY") or os.getenv("AGENTSEC_VERTEXAI_GATEWAY_API_KEY"),
-    },
-}
-
-agentsec.protect(
-    # AI Defense integration mode: "api" or "gateway"
-    llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
-    mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
+def _initialize_agentsec():
+    """
+    Initialize agentsec protection lazily.
+    This is called on first use to avoid import-time dependencies.
     
-    # API mode configuration (LLM)
-    api_mode_llm=os.getenv("AGENTSEC_API_MODE_LLM", "monitor"),
-    api_mode_llm_endpoint=os.getenv("AI_DEFENSE_API_MODE_LLM_ENDPOINT"),
-    api_mode_llm_api_key=os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
-    api_mode_fail_open_llm=True,
+    IMPORTANT: This lazy initialization is KEY for Agent Engine deployment.
+    It ensures agentsec.protect() is called AFTER requirements are installed
+    in the container, not at module import time during build validation.
     
-    # API mode configuration (MCP)
-    api_mode_mcp=os.getenv("AGENTSEC_API_MODE_MCP", "monitor"),
-    api_mode_mcp_endpoint=os.getenv("AI_DEFENSE_API_MODE_MCP_ENDPOINT"),
-    api_mode_mcp_api_key=os.getenv("AI_DEFENSE_API_MODE_MCP_API_KEY"),
-    api_mode_fail_open_mcp=True,
+    DO NOT revert to module-level agentsec.protect() call - it will break
+    Agent Engine deployments with "No module named 'wrapt'" errors.
+    """
+    global _agentsec_initialized
+    if _agentsec_initialized:
+        return
     
-    # Gateway mode configuration (LLM)
-    providers=providers_config,
+    # Import here to defer dependency loading
+    from aidefense.runtime import agentsec
     
-    # Gateway mode configuration (MCP)
-    gateway_mode_mcp_url=os.getenv("AGENTSEC_MCP_GATEWAY_URL"),
-    gateway_mode_mcp_api_key=os.getenv("AGENTSEC_MCP_GATEWAY_API_KEY"),
-    gateway_mode_fail_open_mcp=True,
+    # Build provider config based on which SDK we're using
+    providers_config = {
+        "vertexai": {
+            "gateway_url": os.getenv("AGENTSEC_VERTEXAI_GATEWAY_URL"),
+            "gateway_api_key": os.getenv("AGENTSEC_VERTEXAI_GATEWAY_API_KEY"),
+        },
+        "google_genai": {
+            "gateway_url": os.getenv("AGENTSEC_GOOGLE_GENAI_GATEWAY_URL") or os.getenv("AGENTSEC_VERTEXAI_GATEWAY_URL"),
+            "gateway_api_key": os.getenv("AGENTSEC_GOOGLE_GENAI_GATEWAY_API_KEY") or os.getenv("AGENTSEC_VERTEXAI_GATEWAY_API_KEY"),
+        },
+    }
     
-    # Disable auto .env loading since we did it manually
-    auto_dotenv=False,
-)
-
-print(f"[agentsec] SDK: {GOOGLE_AI_SDK} | LLM: {os.getenv('AGENTSEC_API_MODE_LLM', 'monitor')} | "
-      f"MCP: {os.getenv('AGENTSEC_API_MODE_MCP', 'monitor')} | "
-      f"Integration: LLM={os.getenv('AGENTSEC_LLM_INTEGRATION_MODE', 'api')}, MCP={os.getenv('AGENTSEC_MCP_INTEGRATION_MODE', 'api')} | "
-      f"Patched: {agentsec.get_patched_clients()}")
+    agentsec.protect(
+        # AI Defense integration mode: "api" or "gateway"
+        llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
+        mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
+        
+        # API mode configuration (LLM)
+        api_mode_llm=os.getenv("AGENTSEC_API_MODE_LLM", "monitor"),
+        api_mode_llm_endpoint=os.getenv("AI_DEFENSE_API_MODE_LLM_ENDPOINT"),
+        api_mode_llm_api_key=os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
+        api_mode_fail_open_llm=True,
+        
+        # API mode configuration (MCP)
+        api_mode_mcp=os.getenv("AGENTSEC_API_MODE_MCP", "monitor"),
+        api_mode_mcp_endpoint=os.getenv("AI_DEFENSE_API_MODE_MCP_ENDPOINT"),
+        api_mode_mcp_api_key=os.getenv("AI_DEFENSE_API_MODE_MCP_API_KEY"),
+        api_mode_fail_open_mcp=True,
+        
+        # Gateway mode configuration (LLM)
+        providers=providers_config,
+        
+        # Gateway mode configuration (MCP)
+        gateway_mode_mcp_url=os.getenv("AGENTSEC_MCP_GATEWAY_URL"),
+        gateway_mode_mcp_api_key=os.getenv("AGENTSEC_MCP_GATEWAY_API_KEY"),
+        gateway_mode_fail_open_mcp=True,
+        
+        # Disable auto .env loading since we did it manually
+        auto_dotenv=False,
+    )
+    
+    print(f"[agentsec] SDK: {GOOGLE_AI_SDK} | LLM: {os.getenv('AGENTSEC_API_MODE_LLM', 'monitor')} | "
+          f"MCP: {os.getenv('AGENTSEC_API_MODE_MCP', 'monitor')} | "
+          f"Integration: LLM={os.getenv('AGENTSEC_LLM_INTEGRATION_MODE', 'api')}, MCP={os.getenv('AGENTSEC_MCP_INTEGRATION_MODE', 'api')} | "
+          f"Patched: {agentsec.get_patched_clients()}")
+    
+    _agentsec_initialized = True
 
 # =============================================================================
-# Import LangChain libraries (AFTER agentsec.protect())
+# Import LangChain libraries (AFTER agentsec is ready to be initialized)
 # =============================================================================
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
@@ -269,6 +291,9 @@ def invoke_agent(prompt: str, model: str = None) -> str:
     """
     global _nest_asyncio_applied
     
+    # Initialize agentsec protection (lazy, only on first call)
+    _initialize_agentsec()
+    
     # Enable nested event loops (required for sync tool calling async MCP)
     # Applied on first invocation to avoid side effects when module is imported
     if not _nest_asyncio_applied:
@@ -295,5 +320,8 @@ def invoke_agent(prompt: str, model: str = None) -> str:
 
 def get_client():
     """Get the initialized LangChain LLM (for compatibility)."""
+    # Initialize agentsec protection (lazy, only on first call)
+    _initialize_agentsec()
+    
     llm_with_tools, _ = _get_agent()
     return llm_with_tools

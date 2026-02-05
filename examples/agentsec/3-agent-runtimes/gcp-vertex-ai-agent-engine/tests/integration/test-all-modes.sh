@@ -429,13 +429,17 @@ cd "$PROJECT_DIR"
 poetry install --quiet 2>/dev/null || poetry install
 
 # =============================================================================
-# Test Agent Engine Mode (Local)
+# Test Agent Engine Mode
 # =============================================================================
 test_agent_engine() {
     local integration_mode="$1"
     local log_file="$LOG_DIR/agent-engine-$integration_mode.log"
     
-    log_header "Agent Engine Mode [$integration_mode mode] (Local Test)"
+    if [ "$LOCAL_ONLY" = true ]; then
+        log_header "Agent Engine Mode [$integration_mode mode] (Local Test)"
+    else
+        log_header "Agent Engine Mode [$integration_mode mode] (Real GCP Deployment)"
+    fi
     
     # Set environment for this test
     export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
@@ -444,10 +448,12 @@ test_agent_engine() {
     export GOOGLE_GENAI_USE_VERTEXAI="True"
     export PYTHONPATH="$PROJECT_DIR"
     
-    log_info "Testing agent-engine deployment ($integration_mode mode)..."
-    
-    # Run the agent engine app locally with tool-triggering prompt
-    if poetry run python -c "
+    # Local test mode
+    if [ "$LOCAL_ONLY" = true ]; then
+        log_info "Testing agent-engine locally ($integration_mode mode)..."
+        
+        # Run the agent engine app locally with tool-triggering prompt
+        if poetry run python -c "
 import sys
 sys.path.insert(0, '$PROJECT_DIR')
 from _shared.agent_factory import invoke_agent
@@ -466,20 +472,60 @@ assert len(result) > 0, 'Response should not be empty'
 print('\\nTool execution verified - agent used check_service_health tool')
 print('Test passed!')
 " > "$log_file" 2>&1; then
-        log_pass "Agent Engine test ($integration_mode mode)"
+            log_pass "Agent Engine test ($integration_mode mode) - local"
+            
+            # Verify AI Defense protection
+            verify_ai_defense_protection "$log_file" "$integration_mode"
+            
+            # Check for tool execution
+            if grep -q "\[TOOL CALL\]" "$log_file"; then
+                log_info "✓ LangChain agent tool execution confirmed"
+            fi
+            
+            return 0
+        else
+            log_fail "Agent Engine test ($integration_mode mode) - local - see $log_file"
+            tail -20 "$log_file"
+            return 1
+        fi
+    fi
+    
+    # Deploy mode - Deploy to real Agent Engine
+    log_info "Deploying to Vertex AI Agent Engine ($integration_mode mode)..."
+    local deploy_start=$(date +%s)
+    
+    if ! "$PROJECT_DIR/agent-engine-deploy/scripts/deploy.sh" >> "$log_file" 2>&1; then
+        log_fail "Agent Engine deployment failed ($integration_mode mode) - see $log_file"
+        tail -30 "$log_file"
+        return 1
+    fi
+    
+    local deploy_end=$(date +%s)
+    local deploy_duration=$((deploy_end - deploy_start))
+    log_pass "Agent Engine deployed successfully (${deploy_duration}s)"
+    
+    # Wait a moment for service to be ready
+    sleep 5
+    
+    # Invoke the deployed Agent Engine
+    log_info "Invoking Agent Engine..."
+    RESPONSE=$("$PROJECT_DIR/agent-engine-deploy/scripts/invoke.sh" "Check the health of the payments service" 2>&1) || true
+    echo "$RESPONSE" >> "$log_file"
+    
+    # Verify response
+    if verify_ai_defense_in_response "$RESPONSE" "$log_file"; then
+        log_pass "Agent Engine deployment + invocation ($integration_mode mode)"
         
-        # Verify AI Defense protection
+        # Verify AI Defense protection in logs
         verify_ai_defense_protection "$log_file" "$integration_mode"
         
-        # Check for tool execution
-        if grep -q "\[TOOL CALL\]" "$log_file"; then
-            log_info "✓ LangChain agent tool execution confirmed"
-        fi
+        # Show response preview
+        log_info "Response: $(echo "$RESPONSE" | grep -o 'Response:.*' | head -1 | cut -c1-80)..."
         
         return 0
     else
-        log_fail "Agent Engine test ($integration_mode mode) - see $log_file"
-        tail -20 "$log_file"
+        log_fail "Agent Engine test ($integration_mode mode) - invalid response - see $log_file"
+        echo "Response: $RESPONSE"
         return 1
     fi
 }
