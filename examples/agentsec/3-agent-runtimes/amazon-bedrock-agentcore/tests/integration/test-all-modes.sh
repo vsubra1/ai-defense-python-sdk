@@ -772,7 +772,7 @@ test_direct_deploy() {
     log_subheader "Testing: Direct Deploy [$integration_mode mode]"
     
     local log_file="$LOG_DIR/direct-deploy-${integration_mode}.log"
-    local agent_name="agentcore_sre_direct"
+    local agent_name="${AGENTCORE_DIRECT_AGENT_NAME:-agentcore_sre_direct}"
     
     # Check if test script exists
     local test_script="$PROJECT_DIR/direct-deploy/test_with_protection.py"
@@ -975,12 +975,12 @@ test_container_deploy() {
     log_subheader "Testing: Container Deploy [$integration_mode mode]"
     
     local log_file="$LOG_DIR/container-deploy-${integration_mode}.log"
-    local agent_name="agentcore_sre_container"
+    local agent_name="${AGENTCORE_CONTAINER_AGENT_NAME:-agentcore_sre_container}"
     
     # Note: Agent should already be deployed by deploy_agents() phase
     
     log_info "Integration mode: $integration_mode"
-    log_info "Invoking container agent"
+    log_info "Invoking container agent: $agent_name"
     log_info "Question: \"$TEST_QUESTION\""
     
     cd "$PROJECT_DIR"
@@ -992,7 +992,7 @@ test_container_deploy() {
     local start_time=$(date +%s)
     local exit_code=0
     
-    poetry run agentcore invoke --agent agentcore_sre_container "{\"prompt\": \"$TEST_QUESTION\"}" > "$log_file" 2>&1 || exit_code=$?
+    poetry run agentcore invoke --agent "$agent_name" "{\"prompt\": \"$TEST_QUESTION\"}" > "$log_file" 2>&1 || exit_code=$?
     
     local end_time=$(date +%s)
     local duration=$((end_time - start_time))
@@ -1168,7 +1168,10 @@ if [ "$LOCAL_MODE" = "false" ]; then
     fi
 fi
 
-# Load shared environment variables
+# Load shared environment variables; preserve resource names from parent (e.g. --new-resources)
+_SAVED_AGENTCORE_DIRECT="${AGENTCORE_DIRECT_AGENT_NAME:-}"
+_SAVED_AGENTCORE_CONTAINER="${AGENTCORE_CONTAINER_AGENT_NAME:-}"
+_SAVED_FUNCTION_NAME="${FUNCTION_NAME:-}"
 SHARED_ENV="$PROJECT_DIR/../../.env"
 if [ -f "$SHARED_ENV" ]; then
     log_info "Loading environment from $SHARED_ENV"
@@ -1176,6 +1179,9 @@ if [ -f "$SHARED_ENV" ]; then
     source "$SHARED_ENV"
     set +a
 fi
+[ -n "$_SAVED_AGENTCORE_DIRECT" ] && export AGENTCORE_DIRECT_AGENT_NAME="$_SAVED_AGENTCORE_DIRECT"
+[ -n "$_SAVED_AGENTCORE_CONTAINER" ] && export AGENTCORE_CONTAINER_AGENT_NAME="$_SAVED_AGENTCORE_CONTAINER"
+[ -n "$_SAVED_FUNCTION_NAME" ] && export FUNCTION_NAME="$_SAVED_FUNCTION_NAME"
 
 # Setup log directory
 setup_log_dir

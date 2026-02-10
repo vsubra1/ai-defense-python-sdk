@@ -22,7 +22,8 @@ ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-# Load environment variables from shared examples/.env
+# Load environment variables from shared examples/.env (preserve name if set by parent e.g. --new-resources)
+_SAVED_DIRECT_AGENT="${AGENTCORE_DIRECT_AGENT_NAME:-}"
 EXAMPLES_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 if [ -f "$EXAMPLES_DIR/.env" ]; then
     set -a
@@ -33,6 +34,7 @@ elif [ -f "$ROOT_DIR/.env" ]; then
     source "$ROOT_DIR/.env"
     set +a
 fi
+[ -n "$_SAVED_DIRECT_AGENT" ] && export AGENTCORE_DIRECT_AGENT_NAME="$_SAVED_DIRECT_AGENT"
 
 # Set defaults
 export AWS_REGION="${AWS_REGION:-us-west-2}"
@@ -47,11 +49,14 @@ echo "Root: $ROOT_DIR"
 echo ""
 
 
+# Agent name (override with AGENTCORE_DIRECT_AGENT_NAME for new resource names)
+AGENT_NAME="${AGENTCORE_DIRECT_AGENT_NAME:-agentcore_sre_direct}"
+
 # Configure the agent for direct_code_deploy (without -c to avoid container mode)
-echo "Configuring agent..."
+echo "Configuring agent: $AGENT_NAME"
 poetry run agentcore configure \
     -e direct-deploy/agentcore_app.py \
-    -n agentcore_sre_direct \
+    -n "$AGENT_NAME" \
     --disable-otel \
     -dt direct_code_deploy \
     -rt PYTHON_3_11 \
@@ -60,8 +65,8 @@ poetry run agentcore configure \
 
 # Deploy the agent
 echo ""
-echo "Deploying agent..."
-poetry run agentcore deploy -a agentcore_sre_direct -auc
+echo "Deploying agent: $AGENT_NAME"
+poetry run agentcore deploy -a "$AGENT_NAME" -auc
 
 echo ""
 echo "=============================================="

@@ -27,7 +27,8 @@ ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-# Load environment variables from shared examples/.env
+# Load environment variables from shared examples/.env (preserve name if set by parent e.g. --new-resources)
+_SAVED_CONTAINER_AGENT="${AGENTCORE_CONTAINER_AGENT_NAME:-}"
 EXAMPLES_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 if [ -f "$EXAMPLES_DIR/.env" ]; then
     set -a
@@ -38,6 +39,7 @@ elif [ -f "$ROOT_DIR/.env" ]; then
     source "$ROOT_DIR/.env"
     set +a
 fi
+[ -n "$_SAVED_CONTAINER_AGENT" ] && export AGENTCORE_CONTAINER_AGENT_NAME="$_SAVED_CONTAINER_AGENT"
 
 # Set defaults - Container deploy requires ECR in the same region
 # Default to us-west-2 where the existing ECR repo lives
@@ -91,12 +93,15 @@ if [ -f "$EXAMPLES_DIR/.env" ]; then
     echo "Copied .env from $EXAMPLES_DIR/.env"
 fi
 
+# Agent name (override with AGENTCORE_CONTAINER_AGENT_NAME for new resource names)
+AGENT_NAME="${AGENTCORE_CONTAINER_AGENT_NAME:-agentcore_sre_container}"
+
 # Configure the agent for container deployment
-echo "Configuring agent for container deployment..."
+echo "Configuring agent: $AGENT_NAME"
 poetry run agentcore configure -c \
     -e container-deploy/agentcore_app.py \
     -rf container-deploy/requirements.txt \
-    -n agentcore_sre_container \
+    -n "$AGENT_NAME" \
     --ecr "$ECR_URI" \
     --disable-otel \
     -dt container \
@@ -105,8 +110,8 @@ poetry run agentcore configure -c \
 
 # Deploy the agent (builds in cloud with CodeBuild, pushes, and registers)
 echo ""
-echo "Building and deploying container..."
-poetry run agentcore deploy -a agentcore_sre_container -auc
+echo "Building and deploying container: $AGENT_NAME"
+poetry run agentcore deploy -a "$AGENT_NAME" -auc
 
 echo ""
 echo "=============================================="

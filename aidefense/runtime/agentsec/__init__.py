@@ -401,6 +401,11 @@ def _protect_impl(
         api_mode_llm = env_config.get("llm_mode") or "monitor"
     if api_mode_mcp is None:
         api_mode_mcp = env_config.get("mcp_mode") or "monitor"
+    # Normalize common env typos (e.g. on_enforce from mixing gateway "on" with api "enforce")
+    if api_mode_llm and api_mode_llm.startswith("on_"):
+        api_mode_llm = api_mode_llm[3:]
+    if api_mode_mcp and api_mode_mcp.startswith("on_"):
+        api_mode_mcp = api_mode_mcp[3:]
     
     # Validate API modes
     for name, mode in [("api_mode_llm", api_mode_llm), ("api_mode_mcp", api_mode_mcp)]:

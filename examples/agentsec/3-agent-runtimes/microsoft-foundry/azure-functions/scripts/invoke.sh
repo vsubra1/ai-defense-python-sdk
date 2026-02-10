@@ -20,12 +20,15 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Load environment variables
 # Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
+# Preserve function app name if set by parent (e.g. --new-resources timestamped name)
+_SAVED_FUNCTION_APP_NAME="${AZURE_FUNCTION_APP_NAME:-}"
 AGENTSEC_EXAMPLES_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
 if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
     set -a
     source "$AGENTSEC_EXAMPLES_DIR/.env"
     set +a
 fi
+[ -n "$_SAVED_FUNCTION_APP_NAME" ] && export AZURE_FUNCTION_APP_NAME="$_SAVED_FUNCTION_APP_NAME"
 
 # Validate required environment variables
 : "${AZURE_FUNCTION_APP_NAME:?AZURE_FUNCTION_APP_NAME is required}"

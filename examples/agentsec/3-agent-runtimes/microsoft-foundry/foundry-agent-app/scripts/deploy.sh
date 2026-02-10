@@ -25,12 +25,15 @@ cd "$ROOT_DIR"
 
 # Load environment variables from shared examples/agentsec/.env
 # Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
+# Preserve endpoint names if set by parent (e.g. --new-resources timestamped names)
+_SAVED_AGENT_ENDPOINT="${AGENT_ENDPOINT_NAME:-}"
 AGENTSEC_EXAMPLES_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
 if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
     set -a
     source "$AGENTSEC_EXAMPLES_DIR/.env"
     set +a
 fi
+[ -n "$_SAVED_AGENT_ENDPOINT" ] && export AGENT_ENDPOINT_NAME="$_SAVED_AGENT_ENDPOINT"
 
 # Validate required environment variables
 : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"
@@ -42,7 +45,7 @@ fi
 # Configuration
 IMAGE_NAME="${IMAGE_NAME:-foundry-agent-app}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-ENDPOINT_NAME="${ENDPOINT_NAME:-foundry-sre-agent}"
+ENDPOINT_NAME="${AGENT_ENDPOINT_NAME:-${ENDPOINT_NAME:-foundry-sre-agent}}"
 DEPLOYMENT_NAME="${DEPLOYMENT_NAME:-default}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-Standard_DS3_v2}"
 INSTANCE_COUNT="${INSTANCE_COUNT:-1}"
@@ -58,6 +61,8 @@ echo "Workspace: $AZURE_AI_FOUNDRY_PROJECT"
 echo "ACR: $AZURE_ACR_LOGIN_SERVER"
 echo "Image: $FULL_IMAGE_NAME"
 echo "Endpoint: $ENDPOINT_NAME"
+echo ""
+echo "Note: First-time deploy often takes 10-20 min (ACR build ~5-10 min, ML deployment ~5-10 min)."
 echo ""
 
 # Set Azure subscription
@@ -81,8 +86,8 @@ fi
 echo "Logging in to ACR..."
 az acr login --name "$AZURE_ACR_NAME"
 
-# Build and push the container image using ACR Build
-echo "Building and pushing container image..."
+# Build and push the container image using ACR Build (typically 5-10 min)
+echo "[1/4] Building and pushing container image to ACR (this may take 5-10 min)..."
 az acr build \
     --registry "$AZURE_ACR_NAME" \
     --image "$IMAGE_NAME:$IMAGE_TAG" \
@@ -99,6 +104,10 @@ EOF
 # Create deployment configuration YAML with inference_config
 # NOTE: For custom containers (BYOC), the model section is optional.
 # Azure ML inference server (azmlinfsrv) uses "/" for liveness/readiness and "/score" for scoring.
+# Escape env var for safe use inside double-quoted YAML in heredoc (prevents " and newlines from breaking parsing)
+escape_yaml_val() {
+  printf '%s' "$1" | sed 's/"/\\"/g' | tr '\n' ' '
+}
 cat > "$DEPLOY_DIR/deployment.yaml" << EOF
 \$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
 name: $DEPLOYMENT_NAME
@@ -122,21 +131,21 @@ request_settings:
   request_timeout_ms: 120000
   max_concurrent_requests_per_instance: 1
 environment_variables:
-  AZURE_OPENAI_ENDPOINT: "$AZURE_OPENAI_ENDPOINT"
-  AZURE_OPENAI_API_KEY: "$AZURE_OPENAI_API_KEY"
-  AZURE_OPENAI_DEPLOYMENT_NAME: "${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4o}"
-  AZURE_OPENAI_API_VERSION: "${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}"
-  AGENTSEC_LLM_INTEGRATION_MODE: "${AGENTSEC_LLM_INTEGRATION_MODE:-api}"
-  AGENTSEC_MCP_INTEGRATION_MODE: "${AGENTSEC_MCP_INTEGRATION_MODE:-api}"
-  AGENTSEC_API_MODE_LLM: "${AGENTSEC_API_MODE_LLM:-monitor}"
-  AGENTSEC_API_MODE_MCP: "${AGENTSEC_API_MODE_MCP:-monitor}"
-  AI_DEFENSE_API_MODE_LLM_ENDPOINT: "${AI_DEFENSE_API_MODE_LLM_ENDPOINT:-}"
-  AI_DEFENSE_API_MODE_LLM_API_KEY: "${AI_DEFENSE_API_MODE_LLM_API_KEY:-}"
-  MCP_SERVER_URL: "${MCP_SERVER_URL:-}"
+  AZURE_OPENAI_ENDPOINT: "$(escape_yaml_val "$AZURE_OPENAI_ENDPOINT")"
+  AZURE_OPENAI_API_KEY: "$(escape_yaml_val "$AZURE_OPENAI_API_KEY")"
+  AZURE_OPENAI_DEPLOYMENT_NAME: "$(escape_yaml_val "${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4o}")"
+  AZURE_OPENAI_API_VERSION: "$(escape_yaml_val "${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}")"
+  AGENTSEC_LLM_INTEGRATION_MODE: "$(escape_yaml_val "${AGENTSEC_LLM_INTEGRATION_MODE:-api}")"
+  AGENTSEC_MCP_INTEGRATION_MODE: "$(escape_yaml_val "${AGENTSEC_MCP_INTEGRATION_MODE:-api}")"
+  AGENTSEC_API_MODE_LLM: "$(escape_yaml_val "${AGENTSEC_API_MODE_LLM:-monitor}")"
+  AGENTSEC_API_MODE_MCP: "$(escape_yaml_val "${AGENTSEC_API_MODE_MCP:-monitor}")"
+  AI_DEFENSE_API_MODE_LLM_ENDPOINT: "$(escape_yaml_val "${AI_DEFENSE_API_MODE_LLM_ENDPOINT:-}")"
+  AI_DEFENSE_API_MODE_LLM_API_KEY: "$(escape_yaml_val "${AI_DEFENSE_API_MODE_LLM_API_KEY:-}")"
+  MCP_SERVER_URL: "$(escape_yaml_val "${MCP_SERVER_URL:-}")"
 EOF
 
-# Create or update endpoint
-echo "Creating/updating endpoint..."
+# Create or update endpoint (quick)
+echo "[2/4] Creating/updating endpoint..."
 if az ml online-endpoint show --name "$ENDPOINT_NAME" \
     --resource-group "$AZURE_RESOURCE_GROUP" \
     --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" &>/dev/null; then
@@ -149,8 +158,8 @@ else
         --workspace-name "$AZURE_AI_FOUNDRY_PROJECT"
 fi
 
-# Create or update deployment
-echo "Creating/updating deployment..."
+# Create or update deployment (typically 5-10 min while Azure provisions compute)
+echo "[3/4] Creating/updating deployment (may take 5-10 min)..."
 if az ml online-deployment show --name "$DEPLOYMENT_NAME" --endpoint-name "$ENDPOINT_NAME" \
     --resource-group "$AZURE_RESOURCE_GROUP" \
     --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" &>/dev/null; then
@@ -169,6 +178,7 @@ else
 fi
 
 # Get endpoint URL
+echo "[4/4] Fetching endpoint URL..."
 ENDPOINT_URL=$(az ml online-endpoint show \
     --name "$ENDPOINT_NAME" \
     --resource-group "$AZURE_RESOURCE_GROUP" \
@@ -186,5 +196,5 @@ echo "=============================================="
 echo "Image: $FULL_IMAGE_NAME"
 echo "Endpoint URL: $ENDPOINT_URL"
 echo ""
-echo "Run ./scripts/invoke.sh \"Your message\" to test"
+echo 'Run ./scripts/invoke.sh "Your message" to test'
 echo "=============================================="

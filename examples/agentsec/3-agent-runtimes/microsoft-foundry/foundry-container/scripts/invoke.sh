@@ -29,7 +29,7 @@ if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
 fi
 
 # Configuration
-ENDPOINT_NAME="${ENDPOINT_NAME:-foundry-sre-container}"
+ENDPOINT_NAME="${CONTAINER_ENDPOINT_NAME:-${ENDPOINT_NAME:-foundry-sre-container}}"
 
 # Validate required environment variables
 : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"

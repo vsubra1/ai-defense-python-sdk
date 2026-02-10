@@ -74,10 +74,16 @@ class TestExampleStructure:
             requirements = os.path.join(project_dir, deploy_mode, "requirements.txt")
             assert os.path.isfile(requirements), f"{deploy_mode}/requirements.txt should exist"
             
-            # Verify cisco-aidefense-sdk is in requirements
+            # Verify SDK is present: either cisco-aidefense-sdk (PyPI) or bundled aidefense (local package)
             with open(requirements, "r") as f:
                 content = f.read()
-            assert "cisco-aidefense-sdk" in content, f"{deploy_mode}/requirements.txt should include cisco-aidefense-sdk"
+            has_sdk = "cisco-aidefense-sdk" in content or (
+                "aidefense" in content.lower() and ("bundled" in content.lower() or "aiohttp" in content)
+            )
+            assert has_sdk, (
+                f"{deploy_mode}/requirements.txt should include cisco-aidefense-sdk or "
+                "aidefense dependencies (when SDK is bundled as source)"
+            )
 
     def test_kubernetes_configs_exist_for_gke(self):
         """Test that Kubernetes configs exist for GKE deployment."""

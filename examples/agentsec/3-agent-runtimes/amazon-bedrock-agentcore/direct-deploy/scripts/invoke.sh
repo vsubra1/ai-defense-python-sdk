@@ -17,7 +17,8 @@ ROOT_DIR="$(cd "$DEPLOY_DIR/.." && pwd)"
 
 cd "$ROOT_DIR"
 
-# Load environment variables from shared examples/.env
+# Load environment variables from shared examples/.env (preserve name if set by parent e.g. --new-resources)
+_SAVED_DIRECT_AGENT="${AGENTCORE_DIRECT_AGENT_NAME:-}"
 EXAMPLES_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 if [ -f "$EXAMPLES_DIR/.env" ]; then
     set -a
@@ -28,6 +29,7 @@ elif [ -f "$ROOT_DIR/.env" ]; then
     source "$ROOT_DIR/.env"
     set +a
 fi
+[ -n "$_SAVED_DIRECT_AGENT" ] && export AGENTCORE_DIRECT_AGENT_NAME="$_SAVED_DIRECT_AGENT"
 
 export AWS_REGION="${AWS_REGION:-us-west-2}"
 
@@ -39,4 +41,5 @@ echo "=============================================="
 echo "Prompt: $PROMPT"
 echo ""
 
-poetry run agentcore invoke --agent agentcore_sre_direct "{\"prompt\":\"${PROMPT}\"}"
+AGENT_NAME="${AGENTCORE_DIRECT_AGENT_NAME:-agentcore_sre_direct}"
+poetry run agentcore invoke --agent "$AGENT_NAME" "{\"prompt\":\"${PROMPT}\"}"

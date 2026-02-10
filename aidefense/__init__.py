@@ -46,6 +46,9 @@ __all__ = [
     "AsyncLLMClient",
     "MCPClient",
     "AsyncMCPClient",
+    "HttpInspectionClient",
+    "ChatInspectionClient",
+    "get_patched_clients",
     # config
     "Config",
     "AsyncConfig",
@@ -77,6 +80,9 @@ def __getattr__(name: str) -> Any:
         "AsyncLLMClient": ("aidefense.runtime", "AsyncLLMClient"),
         "MCPClient": ("aidefense.runtime", "MCPClient"),
         "AsyncMCPClient": ("aidefense.runtime", "AsyncMCPClient"),
+        "HttpInspectionClient": ("aidefense.runtime", "HttpInspectionClient"),
+        "ChatInspectionClient": ("aidefense.runtime", "ChatInspectionClient"),
+        "get_patched_clients": ("aidefense.runtime", "get_patched_clients"),
         # From config
         "Config": ("aidefense.config", "Config"),
         "AsyncConfig": ("aidefense.config", "AsyncConfig"),

@@ -52,7 +52,8 @@ LOG_DIR="$SCRIPT_DIR/logs"
 # Create logs directory
 mkdir -p "$LOG_DIR"
 
-# Load environment (check multiple locations)
+# Load environment (check multiple locations); preserve resource names from parent (e.g. --new-resources)
+_SAVED_AGENT_ENGINE_NAME="${AGENT_ENGINE_NAME:-}"
 ENV_FILE=""
 if [ -f "$EXAMPLES_DIR/.env" ]; then
     ENV_FILE="$EXAMPLES_DIR/.env"
@@ -65,6 +66,7 @@ if [ -n "$ENV_FILE" ]; then
     source "$ENV_FILE" 2>/dev/null || true
     set +a
 fi
+[ -n "$_SAVED_AGENT_ENGINE_NAME" ] && export AGENT_ENGINE_NAME="$_SAVED_AGENT_ENGINE_NAME"
 
 # Test counters
 TESTS_PASSED=0

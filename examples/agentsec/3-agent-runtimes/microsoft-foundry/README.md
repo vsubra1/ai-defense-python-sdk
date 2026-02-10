@@ -246,6 +246,57 @@ Deployment tests require additional Azure credentials:
 - `AZURE_ACR_NAME` / `AZURE_ACR_LOGIN_SERVER` (for container)
 - `AZURE_FUNCTION_APP_NAME` / `AZURE_STORAGE_ACCOUNT` (for functions)
 
+## Finding resources in Azure Portal
+
+All deployment resources use the **resource group** and **subscription** from `examples/agentsec/.env` (`AZURE_RESOURCE_GROUP`, `AZURE_SUBSCRIPTION_ID`). With `--new-resources`, agent, container, and function app share the same timestamp suffix in their names.
+
+### 1. Open the resource group
+
+1. Go to [Azure Portal](https://portal.azure.com).
+2. In the top search bar, type **Resource groups** and open it.
+3. Select your subscription (e.g. the one matching `AZURE_SUBSCRIPTION_ID`).
+4. Open the resource group named **`AZURE_RESOURCE_GROUP`** (e.g. `AI_Runtime_AID`).
+
+You’ll see the Function App, Storage Account, and Container Registry in this group. The ML endpoints live inside the AI Foundry workspace (next step).
+
+### 2. Agent App and Container endpoints (Azure AI Foundry / ML)
+
+1. In the portal search bar, type **Azure AI** or **Machine Learning**.
+2. Open **Azure AI** (or **Machine Learning**).
+3. In the left menu, open **AI services** → **Azure AI Foundry** (or find the workspace under **Machine Learning**).
+4. Open the workspace named **`AZURE_AI_FOUNDRY_PROJECT`** (e.g. `aid-ml-workspace`).
+5. In the workspace, go to **Inference** (or **Endpoints**) → **Online endpoints**.
+6. Your deployments appear as:
+   - **Agent App:** endpoint name = `AGENT_ENDPOINT_NAME` (e.g. `foundry-sre-agent` or `foundry-sre-agent-26020619`).
+   - **Container:** endpoint name = `CONTAINER_ENDPOINT_NAME` (e.g. `foundry-sre-container` or `foundry-sre-container-26020619`).
+
+Click an endpoint to see deployments, scoring URL, and logs.
+
+### 3. Azure Function App
+
+1. Stay in the same **resource group** (step 1), or search for **Function App** in the top bar.
+2. Open **Function App** in the left menu.
+3. Find the app named **`AZURE_FUNCTION_APP_NAME`** (e.g. `aid-sre-agent-func` or `aid-sre-agent-func-26020619`).
+
+From the function app you can open **Functions** (e.g. `invoke`), **Overview**, and **Deployment Center**.
+
+### 4. Other resources in the same resource group
+
+- **Storage account:** `AZURE_STORAGE_ACCOUNT` (e.g. `aidsreagentstorage`) — used by the Function App.
+- **Container registry:** `AZURE_ACR_NAME` (e.g. `aidAIRuntime`) — used for container images.
+
+### Quick lookup (same names as in scripts)
+
+| Resource            | Env variable              | Example name (with `--new-resources`)   |
+|---------------------|---------------------------|-----------------------------------------|
+| Resource group      | `AZURE_RESOURCE_GROUP`    | `AI_Runtime_AID`                        |
+| ML workspace        | `AZURE_AI_FOUNDRY_PROJECT`| `aid-ml-workspace`                      |
+| Agent endpoint      | `AGENT_ENDPOINT_NAME`     | `foundry-sre-agent-26020619`            |
+| Container endpoint  | `CONTAINER_ENDPOINT_NAME` | `foundry-sre-container-26020619`        |
+| Function App        | `AZURE_FUNCTION_APP_NAME` | `aid-sre-agent-func-26020619`           |
+| Storage account     | `AZURE_STORAGE_ACCOUNT`   | `aidsreagentstorage`                    |
+| Container registry  | `AZURE_ACR_NAME`         | `aidAIRuntime`                          |
+
 ## Troubleshooting
 
 ### Azure OpenAI Connection Issues

@@ -35,12 +35,15 @@ cd "$ROOT_DIR"
 
 # Load environment variables from shared examples/agentsec/.env
 # Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
+# Preserve endpoint names if set by parent (e.g. --new-resources timestamped names)
+_SAVED_CONTAINER_ENDPOINT="${CONTAINER_ENDPOINT_NAME:-}"
 AGENTSEC_EXAMPLES_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
 if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
     set -a
     source "$AGENTSEC_EXAMPLES_DIR/.env"
     set +a
 fi
+[ -n "$_SAVED_CONTAINER_ENDPOINT" ] && export CONTAINER_ENDPOINT_NAME="$_SAVED_CONTAINER_ENDPOINT"
 
 # Validate required environment variables
 : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"
@@ -52,7 +55,7 @@ fi
 # Configuration
 IMAGE_NAME="${IMAGE_NAME:-foundry-sre-agent}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-ENDPOINT_NAME="${ENDPOINT_NAME:-foundry-sre-container}"
+ENDPOINT_NAME="${CONTAINER_ENDPOINT_NAME:-${ENDPOINT_NAME:-foundry-sre-container}}"
 DEPLOYMENT_NAME="${DEPLOYMENT_NAME:-default}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-Standard_DS3_v2}"
 INSTANCE_COUNT="${INSTANCE_COUNT:-1}"
@@ -75,6 +78,10 @@ echo "Setting Azure subscription..."
 az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 
 # Copy agentsec source to the build context (it's not on PyPI)
+# Remove copy on exit (success or failure) so it doesn't shadow repo aidefense for MCP tests
+cleanup_aidefense_copy() { rm -rf "$ROOT_DIR/aidefense" 2>/dev/null || true; }
+trap cleanup_aidefense_copy EXIT
+
 echo "Copying aidefense SDK source to build context..."
 # Path: agentsec/ -> examples/ -> repo-root/aidefense/
 AIDEFENSE_SRC="$AGENTSEC_EXAMPLES_DIR/../../aidefense"
@@ -109,12 +116,13 @@ EOF
 # Create deployment configuration YAML
 # NOTE: For custom containers (BYOC), the model section is optional.
 # Azure ML inference server (azmlinfsrv) uses "/" for liveness/readiness and "/score" for scoring.
+# Use unique environment name per endpoint to avoid "Cannot override existing endpoint: InferenceLiveness".
 cat > "$DEPLOY_DIR/deployment.yaml" << EOF
 \$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
 name: $DEPLOYMENT_NAME
 endpoint_name: $ENDPOINT_NAME
 environment:
-  name: foundry-container-env
+  name: foundry-container-env-${ENDPOINT_NAME}
   image: $FULL_IMAGE_NAME
   inference_config:
     liveness_route:
@@ -184,10 +192,6 @@ ENDPOINT_URL=$(az ml online-endpoint show \
     --resource-group "$AZURE_RESOURCE_GROUP" \
     --workspace-name "$AZURE_AI_FOUNDRY_PROJECT" \
     --query "scoring_uri" -o tsv)
-
-# Cleanup
-echo "Cleaning up build artifacts..."
-rm -rf "$ROOT_DIR/aidefense" 2>/dev/null || true
 
 echo ""
 echo "=============================================="

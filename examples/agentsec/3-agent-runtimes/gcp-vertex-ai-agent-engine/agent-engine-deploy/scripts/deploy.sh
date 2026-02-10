@@ -26,10 +26,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$DEPLOY_DIR")"
 
-# Load environment
+# Load environment (preserve AGENT_ENGINE_NAME if set by parent e.g. --new-resources)
+_SAVED_AGENT_ENGINE_NAME="${AGENT_ENGINE_NAME:-}"
 if [ -f "$PROJECT_DIR/../../../.env" ]; then
     source "$PROJECT_DIR/../../../.env"
 fi
+[ -n "$_SAVED_AGENT_ENGINE_NAME" ] && export AGENT_ENGINE_NAME="$_SAVED_AGENT_ENGINE_NAME"
 
 # Configuration
 PROJECT="${GOOGLE_CLOUD_PROJECT:?Error: GOOGLE_CLOUD_PROJECT not set. Please set it in .env or export it.}"
@@ -69,6 +71,14 @@ fi
 
 # Ensure gcloud is configured
 gcloud config set project "$PROJECT" --quiet
+
+# Vertex AI Agent Engine SDK uses Application Default Credentials (ADC). Fail fast with a clear message.
+if ! gcloud auth application-default print-access-token &>/dev/null; then
+    echo "ERROR: Application Default Credentials (ADC) not set. The Agent Engine SDK requires ADC."
+    echo "Run in this terminal: gcloud auth application-default login"
+    echo "See: https://cloud.google.com/docs/authentication/external/set-up-adc"
+    exit 1
+fi
 
 echo "Deploying agent using Vertex AI Agent Engine SDK..."
 echo "This may take 3-5 minutes..."

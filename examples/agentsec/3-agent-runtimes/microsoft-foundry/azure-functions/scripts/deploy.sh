@@ -32,12 +32,15 @@ cd "$DEPLOY_DIR"
 
 # Load environment variables from shared examples/agentsec/.env
 # Path: microsoft-foundry/ -> 3-agent-runtimes/ -> agentsec/
+# Preserve function app name if set by parent (e.g. --new-resources timestamped name for new deployment)
+_SAVED_FUNCTION_APP_NAME="${AZURE_FUNCTION_APP_NAME:-}"
 AGENTSEC_EXAMPLES_DIR="$(cd "$ROOT_DIR/../.." && pwd)"
 if [ -f "$AGENTSEC_EXAMPLES_DIR/.env" ]; then
     set -a
     source "$AGENTSEC_EXAMPLES_DIR/.env"
     set +a
 fi
+[ -n "$_SAVED_FUNCTION_APP_NAME" ] && export AZURE_FUNCTION_APP_NAME="$_SAVED_FUNCTION_APP_NAME"
 
 # Validate required environment variables
 : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"
@@ -58,6 +61,14 @@ echo "Function App: $AZURE_FUNCTION_APP_NAME"
 echo "Storage Account: $AZURE_STORAGE_ACCOUNT"
 echo "Location: $LOCATION"
 echo ""
+
+# Azure Functions Core Tools required for publish
+if ! command -v func &>/dev/null; then
+    echo "ERROR: Azure Functions Core Tools (func) not found. Install and ensure 'func' is in PATH."
+    echo "  macOS (Homebrew): brew tap azure/functions && brew install azure-functions-core-tools@4"
+    echo "  Or: https://docs.microsoft.com/en-us/azure/azure-functions/functions-run-local"
+    exit 1
+fi
 
 # Set Azure subscription
 echo "Setting Azure subscription..."
