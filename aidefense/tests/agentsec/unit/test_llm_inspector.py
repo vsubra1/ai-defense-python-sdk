@@ -115,14 +115,14 @@ class TestLLMInspector:
 
     @pytest.mark.asyncio
     async def test_async_inspect_conversation(self):
-        """Test async ainspect_conversation() works correctly."""
+        """Test async ainspect_conversation() uses AsyncChatInspectionClient."""
         inspector = LLMInspector(
             api_key=API_KEY_64,
             endpoint="http://test.example.com",
         )
         mock_client = MagicMock()
-        mock_client.inspect_conversation.return_value = _block_response(["policy violation"])
-        with patch.object(inspector, "_get_chat_client", return_value=mock_client):
+        mock_client.inspect_conversation = AsyncMock(return_value=_block_response(["policy violation"]))
+        with patch.object(inspector, "_get_async_chat_client", new_callable=AsyncMock, return_value=mock_client):
             decision = await inspector.ainspect_conversation(
                 messages=[{"role": "user", "content": "test"}],
                 metadata={},
@@ -267,15 +267,15 @@ class TestLLMInspectorErrorHandling:
 
     @pytest.mark.asyncio
     async def test_async_httpx_timeout_handling(self):
-        """Test async handling of httpx.TimeoutException."""
+        """Test async handling of httpx.TimeoutException (AsyncChatInspectionClient path)."""
         inspector = LLMInspector(
             api_key=API_KEY_64,
             endpoint="http://test.example.com",
             fail_open=True,
         )
         mock_client = MagicMock()
-        mock_client.inspect_conversation.side_effect = httpx.TimeoutException("Async timeout")
-        with patch.object(inspector, "_get_chat_client", return_value=mock_client):
+        mock_client.inspect_conversation = AsyncMock(side_effect=httpx.TimeoutException("Async timeout"))
+        with patch.object(inspector, "_get_async_chat_client", new_callable=AsyncMock, return_value=mock_client):
             decision = await inspector.ainspect_conversation(
                 messages=[{"role": "user", "content": "test"}],
                 metadata={},
@@ -291,8 +291,8 @@ class TestLLMInspectorErrorHandling:
             fail_open=False,
         )
         mock_client = MagicMock()
-        mock_client.inspect_conversation.side_effect = httpx.ConnectError("Connection refused")
-        with patch.object(inspector, "_get_chat_client", return_value=mock_client):
+        mock_client.inspect_conversation = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
+        with patch.object(inspector, "_get_async_chat_client", new_callable=AsyncMock, return_value=mock_client):
             with pytest.raises(InspectionNetworkError):
                 await inspector.ainspect_conversation(
                     messages=[{"role": "user", "content": "test"}],

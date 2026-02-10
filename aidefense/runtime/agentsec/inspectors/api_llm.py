@@ -16,14 +16,16 @@
 
 """LLM Inspector for Cisco AI Defense Chat Inspection API.
 
-Uses ChatInspectionClient from the runtime; no direct HTTP implementation.
+Uses ChatInspectionClient (sync) and AsyncChatInspectionClient (async) from the runtime.
 """
 
+import asyncio
 import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional
 
+import aiohttp
 import httpx
 import requests
 
@@ -33,8 +35,8 @@ from ..exceptions import (
     InspectionTimeoutError,
     InspectionNetworkError,
 )
-from aidefense.config import Config
-from aidefense.runtime.chat_inspect import ChatInspectionClient
+from aidefense.config import Config, AsyncConfig
+from aidefense.runtime.chat_inspect import ChatInspectionClient, AsyncChatInspectionClient
 from aidefense.runtime.chat_models import Message, Role
 from aidefense.runtime.models import Metadata, InspectResponse, InspectionConfig, Rule, RuleName
 
@@ -90,6 +92,31 @@ class _AgentSecConfig(Config):
     ):
         timeout_int = int(timeout_sec) if timeout_sec is not None else 30
         Config._initialize(
+            self,
+            region="us-west-2",
+            runtime_base_url=runtime_base_url,
+            timeout=timeout_int,
+            logger=logger_instance,
+        )
+        if runtime_base_url:
+            self.runtime_base_url = runtime_base_url.rstrip("/")
+
+
+class _AgentSecAsyncConfig(AsyncConfig):
+    """Per-inspector config for AsyncChatInspectionClient; __new__ bypasses singleton."""
+
+    def __new__(cls, *args, **kwargs):
+        return object.__new__(cls)
+
+    def _initialize(
+        self,
+        runtime_base_url: str = None,
+        timeout_sec: float = None,
+        logger_instance: logging.Logger = None,
+        **kwargs,
+    ):
+        timeout_int = int(timeout_sec) if timeout_sec is not None else 30
+        AsyncConfig._initialize(
             self,
             region="us-west-2",
             runtime_base_url=runtime_base_url,
@@ -268,6 +295,10 @@ class LLMInspector:
         # ChatInspectionClient is created lazily via _get_chat_client()
         self._chat_client: Optional[ChatInspectionClient] = None
         self._chat_client_lock = threading.Lock()
+        # AsyncChatInspectionClient is created lazily per event loop via _get_async_chat_client()
+        self._async_chat_client: Optional[AsyncChatInspectionClient] = None
+        self._async_chat_client_lock = threading.Lock()
+        self._async_loop_id: Optional[int] = None
     
     def _get_chat_client(self) -> ChatInspectionClient:
         """Get or create the ChatInspectionClient (thread-safe)."""
@@ -286,6 +317,32 @@ class LLMInspector:
             )
             self._chat_client = ChatInspectionClient(api_key=self.api_key, config=cfg)
             return self._chat_client
+    
+    async def _get_async_chat_client(self) -> AsyncChatInspectionClient:
+        """Get or create AsyncChatInspectionClient for the current event loop (thread-safe)."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        loop_id = id(loop) if loop else None
+        if self._async_chat_client is not None and self._async_loop_id == loop_id:
+            return self._async_chat_client
+        with self._async_chat_client_lock:
+            if self._async_chat_client is not None and self._async_loop_id == loop_id:
+                return self._async_chat_client
+            runtime_base_url = (self.endpoint or "").rstrip("/").removesuffix("/api")
+            if not runtime_base_url:
+                runtime_base_url = "https://us.api.inspect.aidefense.security.cisco.com"
+            cfg = _AgentSecAsyncConfig(
+                runtime_base_url=runtime_base_url,
+                timeout_sec=self.timeout_ms / 1000.0,
+                logger_instance=logger,
+            )
+            client = AsyncChatInspectionClient(api_key=self.api_key, config=cfg)
+            await client._request_handler.ensure_session()
+            self._async_chat_client = client
+            self._async_loop_id = loop_id
+            return self._async_chat_client
     
     def _get_backoff_delay(self, attempt: int) -> float:
         """
@@ -324,10 +381,12 @@ class LLMInspector:
             logger.warning(f"JSON decode error (not retryable): {error}")
             return False
         
-        # Always retry on timeout or network errors (httpx or requests)
+        # Always retry on timeout or network errors (httpx, requests, aiohttp, asyncio)
         if isinstance(error, (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError)):
             return True
         if isinstance(error, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+            return True
+        if isinstance(error, (asyncio.TimeoutError, aiohttp.ClientError)):
             return True
         
         # Retry on configured status codes
@@ -391,13 +450,13 @@ class LLMInspector:
             logger.error("fail_open=False, blocking request due to API error")
             
             # Raise typed exceptions based on error type
-            if isinstance(error, (httpx.TimeoutException, requests.exceptions.Timeout)):
+            if isinstance(error, (httpx.TimeoutException, requests.exceptions.Timeout, asyncio.TimeoutError)):
                 raise InspectionTimeoutError(
                     f"Inspection timed out after {self.timeout_ms}ms: {error_msg}",
                     timeout_ms=self.timeout_ms,
                 ) from error
             
-            if isinstance(error, (httpx.ConnectError, httpx.NetworkError, requests.exceptions.ConnectionError)):
+            if isinstance(error, (httpx.ConnectError, httpx.NetworkError, requests.exceptions.ConnectionError, aiohttp.ClientError)):
                 raise InspectionNetworkError(
                     f"Failed to connect to inspection API: {error_msg}"
                 ) from error
@@ -472,6 +531,7 @@ class LLMInspector:
     ) -> Decision:
         """
         Inspect an LLM conversation for security violations (async).
+        Uses AsyncChatInspectionClient for native async I/O.
         
         Args:
             messages: List of conversation messages with role and content
@@ -485,24 +545,66 @@ class LLMInspector:
             InspectionNetworkError: If fail_open=False and network error occurs
             SecurityPolicyError: If fail_open=False and other API errors occur
         """
-        import asyncio
-        
         if not self.endpoint or not self.api_key:
             logger.debug("No API endpoint/key configured, allowing by default")
             return Decision.allow()
         
-        return await asyncio.to_thread(
-            self.inspect_conversation,
-            messages,
-            metadata or {},
+        logger.info(f"Request inspection: {len(messages)} messages")
+        runtime_messages = _messages_to_runtime(messages)
+        runtime_metadata = _metadata_to_runtime(metadata or {})
+        config = _inspection_config_from_inspector(self.default_rules, self.entity_types)
+        last_error: Optional[Exception] = None
+        timeout_sec = int(self.timeout_ms / 1000) or None
+        
+        for attempt in range(self.retry_total):
+            try:
+                client = await self._get_async_chat_client()
+                resp = await client.inspect_conversation(
+                    messages=runtime_messages,
+                    metadata=runtime_metadata,
+                    config=config,
+                    timeout=timeout_sec,
+                )
+                decision = _inspect_response_to_decision(resp)
+                logger.info(f"Request decision: {decision.action}")
+                return decision
+            except Exception as e:
+                last_error = e
+                logger.debug(f"Attempt {attempt + 1}/{self.retry_total} failed: {e}")
+                is_last_attempt = attempt >= self.retry_total - 1
+                if is_last_attempt or not self._should_retry(e):
+                    break
+                delay = self._get_backoff_delay(attempt)
+                if delay > 0:
+                    logger.debug(f"Retrying in {delay:.2f}s...")
+                    await asyncio.sleep(delay)
+        
+        return self._handle_error(
+            last_error,  # type: ignore
+            context="ainspect_conversation",
+            message_count=len(messages),
         )
     
     def close(self) -> None:
-        """Release the ChatInspectionClient so it can be garbage collected."""
+        """Release the sync ChatInspectionClient so it can be garbage collected."""
         with self._chat_client_lock:
             if self._chat_client is not None:
                 self._chat_client = None
+        with self._async_chat_client_lock:
+            self._async_chat_client = None
+            self._async_loop_id = None
     
     async def aclose(self) -> None:
-        """Release the ChatInspectionClient (same as close; client is sync)."""
+        """Release the AsyncChatInspectionClient session and clear cached clients."""
+        client_to_close = None
+        with self._async_chat_client_lock:
+            if self._async_chat_client is not None:
+                client_to_close = self._async_chat_client
+                self._async_chat_client = None
+                self._async_loop_id = None
+        if client_to_close is not None:
+            try:
+                await client_to_close._request_handler.close()
+            except Exception as e:
+                logger.debug(f"Error closing async chat client session: {e}")
         self.close()
