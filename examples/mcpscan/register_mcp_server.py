@@ -66,6 +66,8 @@ def main():
         auth_server_url="https://feverous-roderick-vertically.ngrok-free.dev/oauth/token",
     )
 
+    # When the API requires it, pass repository_url (absolute URL to the server's source repo).
+    # Omit repository_url if not required by your environment.
     register_request = RegisterMCPServerRequest(
         name="Demo oauth",
         url="https://feverous-roderick-vertically.ngrok-free.dev/mcp/oauth",
@@ -75,6 +77,7 @@ def main():
             auth_type=AuthType.OAUTH,
             oauth=oauth_config
         ),
+        repository_url="https://github.com/myorg/my-mcp-server",
     )
 
     try:
