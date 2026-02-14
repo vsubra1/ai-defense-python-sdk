@@ -107,13 +107,12 @@ Configuration is split between two files:
 
 | Provider | API Mode (`.env`) | Gateway Mode (`.env`) |
 |----------|-------------------|----------------------|
-| **OpenAI** | `OPENAI_API_KEY` | `AGENTSEC_OPENAI_GATEWAY_API_KEY` |
+| **OpenAI** | `OPENAI_API_KEY` | `OPENAI_API_KEY` (same key for both) |
 | **Azure OpenAI** | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT_NAME` | `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` |
 | **AWS Bedrock** | `AWS_REGION`, `AWS_PROFILE` (or access keys) | AWS Sig V4 (no API key needed) |
 | **GCP Vertex AI** | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` + ADC | ADC OAuth2 (no API key needed) |
 | **Cohere** | `COHERE_API_KEY` | `AGENTSEC_COHERE_GATEWAY_API_KEY` |
 | **Mistral AI** | `MISTRAL_API_KEY` | `AGENTSEC_MISTRAL_GATEWAY_API_KEY` |
-| **MCP Tools** | - | `AGENTSEC_MCP_GATEWAY_API_KEY` |
 
 > All gateway URLs are configured in `agentsec.yaml` (not `.env`). MCP server URLs are configured per-example or in test scripts.
 
@@ -243,7 +242,7 @@ Gateway URLs are configured in `agentsec.yaml` under `gateway_mode.llm_gateways`
 
 | Provider | Gateway URL | API Key (`.env`) |
 |----------|-------------|------------------|
-| **OpenAI** | `agentsec.yaml` | `AGENTSEC_OPENAI_GATEWAY_API_KEY` |
+| **OpenAI** | `agentsec.yaml` | `OPENAI_API_KEY` |
 | **Azure OpenAI** | `agentsec.yaml` | `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` |
 | **AWS Bedrock** | `agentsec.yaml` | AWS Sig V4 (no API key) |
 | **Vertex AI** | `agentsec.yaml` | ADC OAuth2 (no API key) |
@@ -644,11 +643,10 @@ cp .env.example .env
 
 | Variable | When Required | Description |
 |----------|:-------------:|-------------|
-| `AGENTSEC_OPENAI_GATEWAY_API_KEY` | Gateway + OpenAI | OpenAI gateway API key |
+| `OPENAI_API_KEY` | Gateway + OpenAI | OpenAI API key (used for both direct and gateway mode) |
 | `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` | Gateway + Azure | Azure OpenAI gateway API key |
 | `AGENTSEC_COHERE_GATEWAY_API_KEY` | Gateway + Cohere | Cohere gateway API key |
 | `AGENTSEC_MISTRAL_GATEWAY_API_KEY` | Gateway + Mistral | Mistral AI gateway API key |
-| `AGENTSEC_MCP_GATEWAY_API_KEY` | Gateway + MCP | MCP gateway API key |
 
 > All gateway URLs are configured in `agentsec.yaml` — only API keys go in `.env`.
 > Bedrock uses AWS Sig V4 auth and Vertex AI uses ADC OAuth2 — neither requires a gateway API key.

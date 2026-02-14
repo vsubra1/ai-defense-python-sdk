@@ -94,7 +94,7 @@ def example_openai_gateway_programmatic():
             "llm_gateways": {
                 "openai-default": {
                     "gateway_url": "https://gateway.preview.aidefense.aiteam.cisco.com/{tenant}/connections/{openai-conn}",
-                    "gateway_api_key": os.getenv("AGENTSEC_OPENAI_GATEWAY_API_KEY"),
+                    "gateway_api_key": os.getenv("OPENAI_API_KEY"),
                     "provider": "openai",
                     "default": True,
                 },
@@ -119,7 +119,7 @@ def example_multi_provider_gateway():
             "llm_gateways": {
                 "openai-default": {
                     "gateway_url": "https://gateway.../openai-conn",
-                    "gateway_api_key": os.getenv("AGENTSEC_OPENAI_GATEWAY_API_KEY"),
+                    "gateway_api_key": os.getenv("OPENAI_API_KEY"),
                     "provider": "openai",
                     "default": True,
                 },
@@ -161,7 +161,6 @@ def example_mcp_gateway_programmatic():
             "mcp_gateways": {
                 mcp_server_url: {
                     "gateway_url": "https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/tenant/{tenant}/connections/{connection}/server/{server}",
-                    "gateway_api_key": os.getenv("AGENTSEC_MCP_GATEWAY_API_KEY"),
                 },
             },
         },
@@ -186,7 +185,7 @@ def example_both_gateway_programmatic():
             "llm_gateways": {
                 "openai-default": {
                     "gateway_url": "https://gateway.../openai-conn",
-                    "gateway_api_key": os.getenv("AGENTSEC_OPENAI_GATEWAY_API_KEY"),
+                    "gateway_api_key": os.getenv("OPENAI_API_KEY"),
                     "provider": "openai",
                     "default": True,
                 },
@@ -194,7 +193,6 @@ def example_both_gateway_programmatic():
             "mcp_gateways": {
                 os.getenv("MCP_SERVER_URL", "https://remote.mcpservers.org/fetch/mcp"): {
                     "gateway_url": "https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/...",
-                    "gateway_api_key": os.getenv("AGENTSEC_MCP_GATEWAY_API_KEY"),
                 },
             },
         },
@@ -213,7 +211,7 @@ def example_mixed_mode():
             "llm_gateways": {
                 "openai-default": {
                     "gateway_url": "https://gateway.../openai-conn",
-                    "gateway_api_key": os.getenv("AGENTSEC_OPENAI_GATEWAY_API_KEY"),
+                    "gateway_api_key": os.getenv("OPENAI_API_KEY"),
                     "provider": "openai",
                     "default": True,
                 },

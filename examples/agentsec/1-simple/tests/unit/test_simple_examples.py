@@ -197,7 +197,7 @@ class TestGatewayModeExample:
         """Test gateway_mode_example.py references environment variables for secrets."""
         source = (SIMPLE_DIR / "gateway_mode_example.py").read_text()
         assert "AI_DEFENSE_API_MODE_LLM_API_KEY" in source
-        assert "AGENTSEC_OPENAI_GATEWAY_API_KEY" in source
+        assert "OPENAI_API_KEY" in source
 
     def test_has_example_functions(self):
         """Test gateway_mode_example.py has example functions."""

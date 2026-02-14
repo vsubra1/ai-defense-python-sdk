@@ -117,7 +117,7 @@ AGENTSEC_API_MODE_LLM=enforce  # monitor, enforce, or off
 # Gateway Mode
 AGENTSEC_LLM_INTEGRATION_MODE=gateway
 AGENTSEC_OPENAI_GATEWAY_URL=https://gateway.aidefense.cisco.com/tenant/connections/openai-conn
-AGENTSEC_OPENAI_GATEWAY_API_KEY=your-gateway-key
+OPENAI_API_KEY=your-openai-api-key  # Used for both direct and gateway mode
 ```
 
 ---

@@ -54,7 +54,7 @@ gateway_mode:
     # -- Provider defaults (auto-selected by detected LLM provider) -----------
     openai-default:
       gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/aea95bfe-ebd1-4ff0-8ab6-6e0d4a7fae45
-      gateway_api_key: ${AGENTSEC_OPENAI_GATEWAY_API_KEY}
+      gateway_api_key: ${OPENAI_API_KEY}
       provider: openai
       default: true
 
@@ -78,14 +78,14 @@ gateway_mode:
       default: true
 
     cohere-default:
-      gateway_url: http://tbd.com/cohere
-      gateway_api_key: ${AGENTSEC_COHERE_GATEWAY_API_KEY}
+      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/b7db955e-c85f-4d24-a8eb-7821ee1badff
+      gateway_api_key: ${COHERE_API_KEY}
       provider: cohere
       default: true
 
     mistral-default:
-      gateway_url: http://tbd.com/mistral
-      gateway_api_key: ${AGENTSEC_MISTRAL_GATEWAY_API_KEY}
+      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/ebb20f41-924f-4fd7-b97e-92f4eb85ddba
+      gateway_api_key: ${MISTRAL_API_KEY}
       provider: mistral
       default: true
 
@@ -102,7 +102,6 @@ gateway_mode:
   mcp_gateways:
     https://remote.mcpservers.org/fetch/mcp:
       gateway_url: https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/tenant/192caeea-9955-44a9-8ef4-19006f5beb10/connections/d988fe8f-ff40-4877-9728-398b7cb13259/server/e740184e-e082-420b-8e6c-eb74e0c60c24
-      gateway_api_key: ${AGENTSEC_MCP_GATEWAY_API_KEY}
 
     # Additional MCP servers (uncomment and configure as needed):
     # https://other-mcp-server.example.com/mcp:

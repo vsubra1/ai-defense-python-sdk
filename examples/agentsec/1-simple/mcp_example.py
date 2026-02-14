@@ -51,7 +51,7 @@ async def main() -> None:
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
     
-    mcp_url = os.environ.get("MCP_SERVER_URL", "https://mcp.deepwiki.com/mcp")
+    mcp_url = os.environ.get("MCP_SERVER_URL", "https://remote.mcpservers.org/fetch/mcp")
     print(f"Connecting to MCP server: {mcp_url}")
     print()
     
@@ -67,15 +67,14 @@ async def main() -> None:
             
             # Make a tool call - this will be inspected by agentsec!
             print("Making tool call (will be inspected by Cisco AI Defense)...")
-            print("  Tool: ask_question")
-            print("  Args: repo=python/cpython, question='What is Python?'")
+            print("  Tool: fetch")
+            print("  Args: url='https://example.com'")
             print()
             
             result = await session.call_tool(
-                "ask_question",
+                "fetch",
                 {
-                    "repoName": "python/cpython",
-                    "question": "What is Python?"
+                    "url": "https://example.com"
                 }
             )
             

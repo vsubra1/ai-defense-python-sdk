@@ -93,7 +93,6 @@ def configure_agentsec():
             "mcp_gateways": {
                 os.getenv("MCP_SERVER_URL", ""): {
                     "gateway_url": os.getenv("AGENTSEC_MCP_GATEWAY_URL"),
-                    "gateway_api_key": os.getenv("AGENTSEC_MCP_GATEWAY_API_KEY"),
                 },
             },
             "llm_defaults": {
