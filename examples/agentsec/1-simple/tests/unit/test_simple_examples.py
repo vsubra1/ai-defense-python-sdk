@@ -25,6 +25,7 @@ EXAMPLES = [
     "simple_strands_bedrock",
     "gateway_mode_example",
     "skip_inspection_example",
+    "multi_gateway_example",
 ]
 
 
@@ -81,10 +82,11 @@ class TestAgentsecIntegration:
         
         assert "agentsec.protect(" in source, f"{example_name}.py should call agentsec.protect()"
 
-    def test_basic_protection_uses_llm_mode(self):
-        """Test basic_protection.py uses api_mode parameter."""
+    def test_basic_protection_uses_yaml_config(self):
+        """Test basic_protection.py loads agentsec.yaml config."""
         source = (SIMPLE_DIR / "basic_protection.py").read_text()
-        assert "api_mode=" in source
+        assert "config=" in source
+        assert "agentsec.yaml" in source
 
     def test_openai_example_imports_after_protect(self):
         """Test openai_example.py imports OpenAI after protect()."""

@@ -17,7 +17,7 @@
 """
 Shared utilities for Google AI client patching.
 
-This module provides common helpers used by both google_ai.py (google-generativeai)
+This module provides common helpers used by both google_genai.py (google-genai)
 and vertexai.py (vertexai) patchers for message normalization and response extraction.
 """
 
@@ -238,3 +238,113 @@ def extract_streaming_chunk_text(chunk: Any) -> str:
         logger.debug(f"Error extracting streaming chunk: {e}")
     
     return ""
+
+
+def build_vertexai_gateway_url(
+    gateway_base_url: str,
+    model_name: str,
+    gw_settings: Any,
+    streaming: bool = False,
+) -> str:
+    """Build the full Vertex AI gateway URL with the REST API path.
+
+    The Vertex AI gateway expects requests at:
+        ``{base}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:{method}``
+
+    Args:
+        gateway_base_url: The base gateway URL from ``agentsec.yaml``
+            (e.g. ``https://gateway.../connections/...``).
+        model_name: The model identifier (e.g. ``gemini-2.5-flash-lite``).
+            Prefixes like ``models/``, ``publishers/google/models/``, or
+            ``vertex_ai/`` are stripped automatically.
+        gw_settings: A :class:`GatewaySettings` with ``gcp_project`` and
+            ``gcp_location`` fields.
+        streaming: If *True*, use ``streamGenerateContent``; otherwise
+            ``generateContent``.
+
+    Returns:
+        The fully-qualified gateway URL.
+
+    Raises:
+        ValueError: If ``gcp_project`` or ``gcp_location`` are not
+            configured on the gateway settings.
+    """
+    project = getattr(gw_settings, "gcp_project", None)
+    location = getattr(gw_settings, "gcp_location", None)
+
+    if not project or not location:
+        raise ValueError(
+            "Vertex AI gateway mode requires gcp_project and gcp_location "
+            "in the gateway configuration (agentsec.yaml).  "
+            f"Got gcp_project={project!r}, gcp_location={location!r}"
+        )
+
+    # Strip common model name prefixes
+    clean_model = model_name
+    for prefix in ("publishers/google/models/", "models/", "vertex_ai/"):
+        if clean_model.startswith(prefix):
+            clean_model = clean_model[len(prefix):]
+            break
+
+    method = "streamGenerateContent" if streaming else "generateContent"
+
+    base = gateway_base_url.rstrip("/")
+    return (
+        f"{base}/v1/projects/{project}/locations/{location}"
+        f"/publishers/google/models/{clean_model}:{method}"
+    )
+
+
+def _build_google_auth_header(gw_settings):
+    """Build an Authorization header from per-gateway GCP settings.
+
+    Constructs Google OAuth2 credentials using the configuration on
+    the gateway entry in ``agentsec.yaml``.  The resolution order is:
+
+    1. Explicit service account key file (``gcp_service_account_key_file``).
+    2. Default Application Default Credentials (``google.auth.default()``).
+
+    If ``gcp_target_service_account`` is also set, the base credentials
+    from steps 1-2 are used to impersonate that service account
+    (analogous to AWS ``aws_role_arn`` / STS assume-role).
+
+    Finally the credentials are refreshed and the resulting OAuth2 access
+    token is returned as a ``Bearer`` authorization header dict.
+
+    Args:
+        gw_settings: A :class:`GatewaySettings` instance with optional
+            ``gcp_*`` fields.
+
+    Returns:
+        A dict ``{"Authorization": "Bearer <token>"}`` ready to merge
+        into HTTP request headers.
+    """
+    import google.auth
+    import google.auth.transport.requests
+
+    scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    # Step 1: Build base credentials
+    if gw_settings.gcp_service_account_key_file:
+        from google.oauth2 import service_account
+
+        credentials = service_account.Credentials.from_service_account_file(
+            gw_settings.gcp_service_account_key_file,
+            scopes=scopes,
+        )
+    else:
+        credentials, _ = google.auth.default(scopes=scopes)
+
+    # Step 2: Impersonate target service account if configured
+    if gw_settings.gcp_target_service_account:
+        from google.auth import impersonated_credentials
+
+        credentials = impersonated_credentials.Credentials(
+            source_credentials=credentials,
+            target_principal=gw_settings.gcp_target_service_account,
+            target_scopes=scopes,
+        )
+
+    # Refresh to obtain a valid access token
+    credentials.refresh(google.auth.transport.requests.Request())
+    return {"Authorization": f"Bearer {credentials.token}"}

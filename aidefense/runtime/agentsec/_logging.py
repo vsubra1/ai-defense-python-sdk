@@ -240,8 +240,8 @@ def cleanup_logging() -> None:
         try:
             handler.close()
             logger.removeHandler(handler)
-        except Exception:
-            pass  # Best effort cleanup
+        except Exception as e:
+            logger.debug("Error closing file handler during cleanup: %s", e)
     
     _file_handlers = []
     _clear_custom_logger()

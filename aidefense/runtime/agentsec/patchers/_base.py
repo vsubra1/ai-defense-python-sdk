@@ -24,6 +24,8 @@ import wrapt
 
 from .. import _state
 from .._context import get_active_gateway, is_llm_skip_active
+from ..decision import Decision
+from ..exceptions import SecurityPolicyError
 from ..gateway_settings import GatewaySettings
 
 logger = logging.getLogger("aidefense.runtime.agentsec.patchers")
@@ -158,12 +160,20 @@ def resolve_gateway_settings(provider: str) -> Optional[GatewaySettings]:
     2. Fall back to the default gateway for this provider (the
        ``llm_gateways`` entry with ``provider: X`` and ``default: true``).
 
+    If gateway mode is active but no gateway configuration is found for
+    the provider, a :class:`SecurityPolicyError` is raised to prevent
+    silent fallback to API mode.
+
     Args:
         provider: The detected provider name (e.g. ``"openai"``).
 
     Returns:
-        A resolved :class:`GatewaySettings` or ``None`` if no gateway
-        applies.
+        A resolved :class:`GatewaySettings` or ``None`` if gateway mode
+        is not active (i.e. integration mode is ``"api"``).
+
+    Raises:
+        SecurityPolicyError: If gateway mode is active but no gateway is
+            configured for the given provider.
     """
     # Gate: only resolve if gateway mode is active for LLM
     if _state.get_llm_integration_mode() != "gateway":
@@ -192,4 +202,17 @@ def resolve_gateway_settings(provider: str) -> Optional[GatewaySettings]:
     if config:
         return _state.resolve_llm_gateway_settings(config, provider=provider)
 
-    return None
+    # Gateway mode is active but no gateway found -- raise rather than
+    # silently falling back to API mode which would change the security
+    # posture without the user's knowledge.
+    raise SecurityPolicyError(
+        Decision.block(
+            reasons=[
+                f"Gateway mode enabled but no gateway configured for "
+                f"provider '{provider}'"
+            ]
+        ),
+        f"Gateway mode is active but no gateway configuration found for "
+        f"provider '{provider}'. Configure a gateway for this provider in "
+        f"gateway_mode.llm_gateways or switch to api integration mode.",
+    )

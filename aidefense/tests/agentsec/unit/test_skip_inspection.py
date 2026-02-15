@@ -260,7 +260,7 @@ class TestPatcherSkipIntegration:
             llm_integration_mode="gateway",
             gateway_mode={
                 "llm_gateways": {
-                    "openai-default": {
+                    "openai-1": {
                         "gateway_url": "https://gw.example.com",
                         "gateway_api_key": "key",
                         "provider": "openai",

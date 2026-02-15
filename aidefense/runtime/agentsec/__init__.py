@@ -17,9 +17,10 @@ Usage (Programmatic):
         llm_integration_mode="gateway",
         gateway_mode={
             "llm_gateways": {
-                "openai-default": {
+                "openai-1": {
                     "gateway_url": "https://gw.aidefense.cisco.com/t1/conn/openai",
                     "gateway_api_key": "your-key",
+                    "auth_mode": "api_key",
                     "provider": "openai",
                     "default": True,
                 },
@@ -226,9 +227,10 @@ def protect(
             llm_integration_mode="gateway",
             gateway_mode={
                 "llm_gateways": {
-                    "openai-default": {
+                    "openai-1": {
                         "gateway_url": "https://...",
                         "gateway_api_key": "key",
+                        "auth_mode": "api_key",
                         "provider": "openai",
                         "default": True,
                     },

@@ -282,6 +282,11 @@ test_provider_with_mode() {
     
     cd "$PROJECT_DIR"
     export CONFIG_FILE="$config_file"
+
+    # CrewAI: use a writable storage dir to avoid
+    # "attempt to write a readonly database" (internal SQLite)
+    export CREWAI_STORAGE_DIR="${CREWAI_STORAGE_DIR:-$PROJECT_DIR/.crewai_storage}"
+    mkdir -p "$CREWAI_STORAGE_DIR"
     
     # Set integration mode via environment variables
     export AGENTSEC_LLM_INTEGRATION_MODE="$mode"

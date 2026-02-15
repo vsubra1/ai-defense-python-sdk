@@ -119,6 +119,323 @@ def _extract_response_text(response: Any) -> str:
     return ""
 
 
+def _openai_messages_to_vertexai(messages: List[Dict]) -> tuple:
+    """Convert OpenAI-format messages to Vertex AI contents format.
+
+    Returns:
+        (contents_list, system_instruction) where system_instruction may be None.
+    """
+    contents: List[Dict] = []
+    system_instruction = None
+
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+
+        if role == "system":
+            system_instruction = content
+            continue
+
+        # Map OpenAI roles → Vertex AI roles
+        vertex_role = "model" if role == "assistant" else "user"
+
+        # Handle tool_calls in assistant messages
+        tool_calls = msg.get("tool_calls")
+        if tool_calls:
+            parts = []
+            if content:
+                parts.append({"text": content})
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                import json as _json
+                args_val = fn.get("arguments", "{}")
+                if isinstance(args_val, str):
+                    try:
+                        args_val = _json.loads(args_val)
+                    except (ValueError, TypeError):
+                        args_val = {}
+                parts.append({
+                    "functionCall": {
+                        "name": fn.get("name", ""),
+                        "args": args_val,
+                    }
+                })
+            contents.append({"role": vertex_role, "parts": parts})
+            continue
+
+        # Handle tool response messages
+        if role == "tool":
+            tool_name = msg.get("name", msg.get("tool_call_id", "unknown"))
+            import json as _json
+            try:
+                resp_val = _json.loads(content) if isinstance(content, str) else content
+            except (ValueError, TypeError):
+                resp_val = {"result": content}
+            contents.append({
+                "role": "user",
+                "parts": [{
+                    "functionResponse": {
+                        "name": tool_name,
+                        "response": resp_val if isinstance(resp_val, dict) else {"result": resp_val},
+                    }
+                }],
+            })
+            continue
+
+        # Standard text message
+        if content:
+            contents.append({
+                "role": vertex_role,
+                "parts": [{"text": str(content)}],
+            })
+
+    return contents, system_instruction
+
+
+def _vertexai_response_to_litellm(response_data: Dict, model: str):
+    """Convert Vertex AI JSON response to a litellm-compatible ModelResponse.
+
+    Uses ``litellm.ModelResponse`` when available, falls back to a plain dict.
+    """
+    # Extract text from candidates
+    text = ""
+    tool_calls_list = []
+    finish_reason = "stop"
+
+    candidates = response_data.get("candidates", [])
+    if candidates:
+        candidate = candidates[0]
+        finish_reason = (candidate.get("finishReason") or "STOP").lower()
+        if finish_reason == "stop":
+            finish_reason = "stop"
+        content = candidate.get("content", {})
+        parts = content.get("parts", [])
+        for part in parts:
+            if "text" in part:
+                text += part["text"]
+            elif "functionCall" in part:
+                fc = part["functionCall"]
+                import json as _json
+                tool_calls_list.append({
+                    "id": f"call_{fc.get('name', 'unknown')}",
+                    "type": "function",
+                    "function": {
+                        "name": fc.get("name", ""),
+                        "arguments": _json.dumps(fc.get("args", {})),
+                    },
+                })
+
+    # Build usage info
+    usage_data = response_data.get("usageMetadata", {})
+
+    try:
+        import litellm
+        from litellm.types.utils import ModelResponse, Choices, Message, Usage
+
+        message_kwargs = {"content": text or None, "role": "assistant"}
+        if tool_calls_list:
+            from litellm.types.utils import Function, ChatCompletionMessageToolCall
+            tc_objects = []
+            for tc in tool_calls_list:
+                fn = tc["function"]
+                tc_objects.append(
+                    ChatCompletionMessageToolCall(
+                        id=tc["id"],
+                        type="function",
+                        function=Function(name=fn["name"], arguments=fn["arguments"]),
+                    )
+                )
+            message_kwargs["tool_calls"] = tc_objects
+
+        resp = ModelResponse(
+            id=response_data.get("responseId", "chatcmpl-gateway"),
+            choices=[Choices(
+                index=0,
+                message=Message(**message_kwargs),
+                finish_reason=finish_reason,
+            )],
+            model=model,
+            usage=Usage(
+                prompt_tokens=usage_data.get("promptTokenCount", 0),
+                completion_tokens=usage_data.get("candidatesTokenCount", 0),
+                total_tokens=usage_data.get("totalTokenCount", 0),
+            ),
+        )
+        return resp
+    except Exception as e:
+        logger.debug(f"Failed to construct litellm ModelResponse, using dict fallback: {e}")
+        # Fallback: construct a dict that litellm can work with
+        return {
+            "id": response_data.get("responseId", "chatcmpl-gateway"),
+            "object": "chat.completion",
+            "model": model,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": text or None,
+                    "tool_calls": tool_calls_list or None,
+                },
+                "finish_reason": finish_reason,
+            }],
+            "usage": {
+                "prompt_tokens": usage_data.get("promptTokenCount", 0),
+                "completion_tokens": usage_data.get("candidatesTokenCount", 0),
+                "total_tokens": usage_data.get("totalTokenCount", 0),
+            },
+        }
+
+
+def _litellm_vertexai_gateway_call(model, messages, kwargs, gw_settings):
+    """Make a direct Vertex AI gateway call for litellm.completion().
+
+    Converts OpenAI-format messages to Vertex AI format, sends via httpx,
+    and converts the response back to a litellm ModelResponse.
+    """
+    import httpx
+
+    # Build auth headers
+    if gw_settings.auth_mode == "google_adc":
+        from ._google_common import _build_google_auth_header
+        auth_headers = _build_google_auth_header(gw_settings)
+    else:
+        if not gw_settings.api_key:
+            raise SecurityPolicyError(
+                Decision.block(reasons=["gateway api_key not configured"]),
+                "Gateway api_key not configured for Vertex AI litellm call",
+            )
+        auth_headers = {"Authorization": f"Bearer {gw_settings.api_key}"}
+
+    # Convert messages
+    contents, system_instruction = _openai_messages_to_vertexai(messages)
+
+    # Build request body
+    request_body: Dict[str, Any] = {"contents": contents}
+    if system_instruction:
+        request_body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+
+    # Extract generation config from kwargs
+    gen_config: Dict[str, Any] = {}
+    if kwargs.get("temperature") is not None:
+        gen_config["temperature"] = kwargs["temperature"]
+    if kwargs.get("max_tokens") is not None:
+        gen_config["maxOutputTokens"] = kwargs["max_tokens"]
+    if kwargs.get("top_p") is not None:
+        gen_config["topP"] = kwargs["top_p"]
+    if gen_config:
+        request_body["generationConfig"] = gen_config
+
+    # Extract tools from kwargs (litellm OpenAI format → Vertex AI format)
+    tools = kwargs.get("tools")
+    if tools:
+        vertex_tools = _convert_openai_tools_to_vertexai(tools)
+        if vertex_tools:
+            request_body["tools"] = vertex_tools
+
+    # Build full gateway URL
+    from ._google_common import build_vertexai_gateway_url
+    full_url = build_vertexai_gateway_url(
+        gw_settings.url, model, gw_settings, streaming=False,
+    )
+
+    logger.debug(f"[GATEWAY] litellm Vertex AI direct call to: {full_url}")
+
+    with httpx.Client(timeout=float(gw_settings.timeout)) as client:
+        response = client.post(
+            full_url,
+            json=request_body,
+            headers={**auth_headers, "Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+        response_data = response.json()
+
+    logger.debug(f"[GATEWAY] litellm Vertex AI response received")
+    return _vertexai_response_to_litellm(response_data, model)
+
+
+async def _litellm_vertexai_gateway_call_async(model, messages, kwargs, gw_settings):
+    """Async version of _litellm_vertexai_gateway_call."""
+    import httpx
+
+    # Build auth headers
+    if gw_settings.auth_mode == "google_adc":
+        from ._google_common import _build_google_auth_header
+        auth_headers = _build_google_auth_header(gw_settings)
+    else:
+        if not gw_settings.api_key:
+            raise SecurityPolicyError(
+                Decision.block(reasons=["gateway api_key not configured"]),
+                "Gateway api_key not configured for Vertex AI litellm call",
+            )
+        auth_headers = {"Authorization": f"Bearer {gw_settings.api_key}"}
+
+    # Convert messages
+    contents, system_instruction = _openai_messages_to_vertexai(messages)
+
+    # Build request body
+    request_body: Dict[str, Any] = {"contents": contents}
+    if system_instruction:
+        request_body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+
+    gen_config: Dict[str, Any] = {}
+    if kwargs.get("temperature") is not None:
+        gen_config["temperature"] = kwargs["temperature"]
+    if kwargs.get("max_tokens") is not None:
+        gen_config["maxOutputTokens"] = kwargs["max_tokens"]
+    if kwargs.get("top_p") is not None:
+        gen_config["topP"] = kwargs["top_p"]
+    if gen_config:
+        request_body["generationConfig"] = gen_config
+
+    tools = kwargs.get("tools")
+    if tools:
+        vertex_tools = _convert_openai_tools_to_vertexai(tools)
+        if vertex_tools:
+            request_body["tools"] = vertex_tools
+
+    from ._google_common import build_vertexai_gateway_url
+    full_url = build_vertexai_gateway_url(
+        gw_settings.url, model, gw_settings, streaming=False,
+    )
+
+    logger.debug(f"[GATEWAY] litellm Vertex AI async direct call to: {full_url}")
+
+    async with httpx.AsyncClient(timeout=float(gw_settings.timeout)) as client:
+        response = await client.post(
+            full_url,
+            json=request_body,
+            headers={**auth_headers, "Content-Type": "application/json"},
+        )
+        response.raise_for_status()
+        response_data = response.json()
+
+    logger.debug(f"[GATEWAY] litellm Vertex AI async response received")
+    return _vertexai_response_to_litellm(response_data, model)
+
+
+def _convert_openai_tools_to_vertexai(tools: List[Dict]) -> List[Dict]:
+    """Convert OpenAI-format tools to Vertex AI format.
+
+    OpenAI: [{"type": "function", "function": {"name": ..., "parameters": ...}}]
+    Vertex AI: [{"functionDeclarations": [{"name": ..., "parameters": ...}]}]
+    """
+    declarations = []
+    for tool in tools:
+        if isinstance(tool, dict) and tool.get("type") == "function":
+            fn = tool.get("function", {})
+            decl: Dict[str, Any] = {"name": fn.get("name", "")}
+            if fn.get("description"):
+                decl["description"] = fn["description"]
+            if fn.get("parameters"):
+                decl["parameters"] = fn["parameters"]
+            declarations.append(decl)
+    if declarations:
+        return [{"functionDeclarations": declarations}]
+    return []
+
+
 def _wrap_completion(wrapped, instance, args, kwargs):
     """Wrapper for litellm.completion().
     
@@ -128,6 +445,7 @@ def _wrap_completion(wrapped, instance, args, kwargs):
     model = kwargs.get("model") or (args[0] if args else "unknown")
     messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
     
+    set_inspection_context(done=False)
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] litellm.completion - inspection skipped (mode=off or already done)")
         return wrapped(*args, **kwargs)
@@ -151,31 +469,48 @@ def _wrap_completion(wrapped, instance, args, kwargs):
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL: {model}")
     logger.debug(f"║ Operation: litellm.completion | Provider: {provider} | LLM Mode: {mode} | Integration: {integration_mode}")
     logger.debug(f"╚══════════════════════════════════════════════════════════════")
     
-    # Gateway mode: attempt to redirect via api_base
+    # Gateway mode: attempt to redirect via gateway
     gw_settings = resolve_gateway_settings(provider)
     if gw_settings:
         logger.debug(f"[PATCHED CALL] litellm.completion - Gateway mode for {provider}")
-        # Set LiteLLM's api_base to the gateway URL
-        # LiteLLM respects api_base for custom endpoints
+        
+        # For Vertex AI: litellm uses its own URL construction which doesn't
+        # match the gateway's expected format.  Make a direct HTTP call
+        # in native Vertex AI format instead.
+        if provider == "vertexai":
+            logger.debug(f"[PATCHED CALL] litellm.completion - direct Vertex AI gateway call")
+            try:
+                response = _litellm_vertexai_gateway_call(model, messages, kwargs, gw_settings)
+                set_inspection_context(
+                    decision=Decision.allow(reasons=["Gateway handled inspection"]),
+                    done=True,
+                )
+                return response
+            except SecurityPolicyError:
+                raise
+            except Exception as e:
+                logger.error(f"[GATEWAY] litellm.completion Vertex AI error: {e}")
+                if gw_settings.fail_open:
+                    logger.warning(f"[GATEWAY] fail_open=True, re-raising for caller to handle")
+                    set_inspection_context(
+                        decision=Decision.allow(reasons=["Gateway error, fail_open=True"]),
+                        done=True,
+                    )
+                    raise
+                raise SecurityPolicyError(
+                    Decision.block(reasons=["Gateway error"]),
+                    f"LiteLLM gateway error: {e}",
+                )
+        
+        # For other providers: redirect via api_base
         kwargs["api_base"] = gw_settings.url
         kwargs["api_key"] = gw_settings.api_key
         logger.debug(f"[PATCHED CALL] litellm.completion - Redirecting to gateway: {gw_settings.url}")
-        
-        # For vertex_ai, we also need to override auth since the gateway handles it
-        if provider == "vertexai":
-            # LiteLLM vertex_ai uses Google ADC; switch to custom api_key auth
-            # Remove vertex-specific params that would trigger ADC auth
-            kwargs.pop("vertex_project", None)
-            kwargs.pop("vertex_location", None)
-            kwargs.pop("vertex_credentials", None)
-            # LiteLLM needs the model without the prefix for custom endpoints
-            # Keep as-is since gateway should handle the model routing
         
         try:
             response = wrapped(*args, **kwargs)
@@ -234,6 +569,7 @@ async def _wrap_acompletion(wrapped, instance, args, kwargs):
     model = kwargs.get("model") or (args[0] if args else "unknown")
     messages = kwargs.get("messages") or (args[1] if len(args) > 1 else [])
     
+    set_inspection_context(done=False)
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] litellm.acompletion - inspection skipped")
         return await wrapped(*args, **kwargs)
@@ -257,24 +593,46 @@ async def _wrap_acompletion(wrapped, instance, args, kwargs):
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL (async): {model}")
     logger.debug(f"║ Operation: litellm.acompletion | Provider: {provider} | LLM Mode: {mode} | Integration: {integration_mode}")
     logger.debug(f"╚══════════════════════════════════════════════════════════════")
     
-    # Gateway mode: attempt to redirect via api_base
+    # Gateway mode: attempt to redirect via gateway
     gw_settings = resolve_gateway_settings(provider)
     if gw_settings:
         logger.debug(f"[PATCHED CALL] litellm.acompletion - Gateway mode for {provider}")
+        
+        # For Vertex AI: direct HTTP call in native format
+        if provider == "vertexai":
+            logger.debug(f"[PATCHED CALL] litellm.acompletion - direct Vertex AI gateway call (async)")
+            try:
+                response = await _litellm_vertexai_gateway_call_async(model, messages, kwargs, gw_settings)
+                set_inspection_context(
+                    decision=Decision.allow(reasons=["Gateway handled inspection"]),
+                    done=True,
+                )
+                return response
+            except SecurityPolicyError:
+                raise
+            except Exception as e:
+                logger.error(f"[GATEWAY] litellm.acompletion Vertex AI error: {e}")
+                if gw_settings.fail_open:
+                    logger.warning(f"[GATEWAY] fail_open=True, re-raising for caller to handle")
+                    set_inspection_context(
+                        decision=Decision.allow(reasons=["Gateway error, fail_open=True"]),
+                        done=True,
+                    )
+                    raise
+                raise SecurityPolicyError(
+                    Decision.block(reasons=["Gateway error"]),
+                    f"LiteLLM gateway error: {e}",
+                )
+        
+        # For other providers: redirect via api_base
         kwargs["api_base"] = gw_settings.url
         kwargs["api_key"] = gw_settings.api_key
         logger.debug(f"[PATCHED CALL] litellm.acompletion - Redirecting to gateway: {gw_settings.url}")
-        
-        if provider == "vertexai":
-            kwargs.pop("vertex_project", None)
-            kwargs.pop("vertex_location", None)
-            kwargs.pop("vertex_credentials", None)
         
         try:
             response = await wrapped(*args, **kwargs)

@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterator, List, Optional
 import wrapt
 
 from .. import _state
-from .._context import clear_inspection_context, get_inspection_context, set_inspection_context
+from .._context import get_inspection_context, set_inspection_context
 from ..decision import Decision
 from ..exceptions import SecurityPolicyError
 from ..inspectors.api_llm import LLMInspector
@@ -480,6 +480,10 @@ def _wrap_chat_completions_create(wrapped, instance, args, kwargs):
     """
     model = kwargs.get("model", "unknown")
     
+    # Reset inspection context for each new API call so successive calls
+    # are each independently inspected.
+    set_inspection_context(done=False)
+    
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] OpenAI.chat.completions.create - inspection skipped (mode=off or already done)")
         return wrapped(*args, **kwargs)
@@ -501,7 +505,6 @@ def _wrap_chat_completions_create(wrapped, instance, args, kwargs):
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL: {model}")
     logger.debug(f"║ Operation: OpenAI.chat.completions.create | LLM Mode: {mode} | Integration: {integration_mode} | Provider: {provider}")
@@ -784,6 +787,10 @@ async def _wrap_chat_completions_create_async(wrapped, instance, args, kwargs):
     """
     model = kwargs.get("model", "unknown")
     
+    # Reset inspection context for each new API call so successive calls
+    # are each independently inspected.
+    set_inspection_context(done=False)
+    
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] OpenAI.async.chat.completions.create - inspection skipped")
         return await wrapped(*args, **kwargs)
@@ -805,7 +812,6 @@ async def _wrap_chat_completions_create_async(wrapped, instance, args, kwargs):
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL (async): {model}")
     logger.debug(f"║ Operation: OpenAI.async.chat.completions.create | LLM Mode: {mode} | Integration: {integration_mode} | Provider: {provider}")
@@ -1030,6 +1036,7 @@ def _wrap_responses_create(wrapped, instance, args, kwargs):
     Wraps LLM inspection with error handling to ensure LLM calls
     never crash due to inspection errors, respecting llm_fail_open setting.
     """
+    set_inspection_context(done=False)
     if not _should_inspect():
         return wrapped(*args, **kwargs)
     
@@ -1083,6 +1090,7 @@ async def _wrap_responses_create_async(wrapped, instance, args, kwargs):
     Wraps LLM inspection with error handling to ensure LLM calls
     never crash due to inspection errors, respecting llm_fail_open setting.
     """
+    set_inspection_context(done=False)
     if not _should_inspect():
         return await wrapped(*args, **kwargs)
     

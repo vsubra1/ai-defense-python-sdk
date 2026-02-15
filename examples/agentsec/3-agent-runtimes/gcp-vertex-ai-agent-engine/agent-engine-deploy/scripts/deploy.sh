@@ -117,30 +117,19 @@ fi
 # Note: GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION are reserved and automatically provided by Agent Engine
 ENV_VARS_JSON="{"
 ENV_VARS_JSON="${ENV_VARS_JSON}\"GOOGLE_GENAI_USE_VERTEXAI\": \"True\","
-ENV_VARS_JSON="${ENV_VARS_JSON}\"AGENTSEC_LLM_INTEGRATION_MODE\": \"${AGENTSEC_LLM_INTEGRATION_MODE:-api}\""
-
-# Add AI Defense API configuration if set
-if [ -n "${AI_DEFENSE_API_MODE_LLM_ENDPOINT:-}" ]; then
-    ENV_VARS_JSON="${ENV_VARS_JSON}, \"AI_DEFENSE_API_MODE_LLM_ENDPOINT\": \"${AI_DEFENSE_API_MODE_LLM_ENDPOINT}\""
-fi
+# Note: agentsec configuration (integration modes, gateway URLs, API keys, etc.)
+# is now loaded from agentsec.yaml at runtime. Only secrets referenced by the YAML
+# via ${VAR_NAME} and non-agentsec env vars need to be passed here.
 if [ -n "${AI_DEFENSE_API_MODE_LLM_API_KEY:-}" ]; then
-    ENV_VARS_JSON="${ENV_VARS_JSON}, \"AI_DEFENSE_API_MODE_LLM_API_KEY\": \"${AI_DEFENSE_API_MODE_LLM_API_KEY}\""
+    ENV_VARS_JSON="${ENV_VARS_JSON}\"AI_DEFENSE_API_MODE_LLM_API_KEY\": \"${AI_DEFENSE_API_MODE_LLM_API_KEY}\""
 fi
-
-# Add Gateway Mode configuration if set
-if [ -n "${AGENTSEC_VERTEXAI_GATEWAY_URL:-}" ]; then
-    ENV_VARS_JSON="${ENV_VARS_JSON}, \"AGENTSEC_VERTEXAI_GATEWAY_URL\": \"${AGENTSEC_VERTEXAI_GATEWAY_URL}\""
-fi
-if [ -n "${AGENTSEC_VERTEXAI_GATEWAY_API_KEY:-}" ]; then
-    ENV_VARS_JSON="${ENV_VARS_JSON}, \"AGENTSEC_VERTEXAI_GATEWAY_API_KEY\": \"${AGENTSEC_VERTEXAI_GATEWAY_API_KEY}\""
+if [ -n "${AI_DEFENSE_API_MODE_MCP_API_KEY:-}" ]; then
+    ENV_VARS_JSON="${ENV_VARS_JSON}, \"AI_DEFENSE_API_MODE_MCP_API_KEY\": \"${AI_DEFENSE_API_MODE_MCP_API_KEY}\""
 fi
 
 # Add MCP configuration if set
 if [ -n "${MCP_SERVER_URL:-}" ]; then
     ENV_VARS_JSON="${ENV_VARS_JSON}, \"MCP_SERVER_URL\": \"${MCP_SERVER_URL}\""
-fi
-if [ -n "${AGENTSEC_MCP_INTEGRATION_MODE:-}" ]; then
-    ENV_VARS_JSON="${ENV_VARS_JSON}, \"AGENTSEC_MCP_INTEGRATION_MODE\": \"${AGENTSEC_MCP_INTEGRATION_MODE}\""
 fi
 
 ENV_VARS_JSON="${ENV_VARS_JSON}}"

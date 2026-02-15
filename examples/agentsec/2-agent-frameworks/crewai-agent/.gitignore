@@ -21,6 +21,9 @@ ENV/
 # pytest
 .pytest_cache/
 
+# CrewAI storage (SQLite DB used at runtime)
+.crewai_storage/
+
 
 
 

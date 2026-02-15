@@ -361,6 +361,16 @@ def resolve_llm_gateway_settings(
         retry_total=retry.get("total", _gw_llm_retry_total),
         retry_backoff=retry.get("backoff_factor", _gw_llm_retry_backoff),
         retry_status_codes=retry.get("status_codes", _gw_llm_retry_status_codes),
+        aws_region=raw_config.get("aws_region"),
+        aws_profile=raw_config.get("aws_profile"),
+        aws_access_key_id=raw_config.get("aws_access_key_id"),
+        aws_secret_access_key=raw_config.get("aws_secret_access_key"),
+        aws_session_token=raw_config.get("aws_session_token"),
+        aws_role_arn=raw_config.get("aws_role_arn"),
+        gcp_project=raw_config.get("gcp_project"),
+        gcp_location=raw_config.get("gcp_location"),
+        gcp_service_account_key_file=raw_config.get("gcp_service_account_key_file"),
+        gcp_target_service_account=raw_config.get("gcp_target_service_account"),
     )
 
 
@@ -369,24 +379,47 @@ def resolve_mcp_gateway_settings(raw_config: dict) -> GatewaySettings:
 
     Merges per-gateway overrides with gateway_mode.mcp_defaults.
 
+    Auth mode inference for backward compatibility:
+    - If ``auth_mode`` is explicitly set, use it as-is.
+    - If ``auth_mode`` is absent but ``gateway_api_key`` is present,
+      infer ``auth_mode = "api_key"`` (backward compat).
+    - Otherwise default to ``"none"`` (no auth).
+
     Args:
         raw_config: A dict with keys like gateway_url, gateway_api_key,
-            fail_open, timeout, retry (sub-dict).
+            auth_mode, fail_open, timeout, retry (sub-dict),
+            oauth2_token_url, oauth2_client_id, oauth2_client_secret,
+            oauth2_scopes.
 
     Returns:
         A fully-resolved GatewaySettings object.
     """
     retry = raw_config.get("retry", {}) or {}
 
+    # Infer auth_mode for backward compatibility
+    explicit_auth_mode = raw_config.get("auth_mode")
+    if explicit_auth_mode is not None:
+        auth_mode = explicit_auth_mode
+    elif raw_config.get("gateway_api_key"):
+        # Backward compat: api_key present without explicit auth_mode
+        auth_mode = "api_key"
+    else:
+        auth_mode = "none"
+
     return GatewaySettings(
         url=raw_config.get("gateway_url", ""),
         api_key=raw_config.get("gateway_api_key"),
-        auth_mode=raw_config.get("auth_mode", "api_key"),
+        auth_mode=auth_mode,
         fail_open=raw_config.get("fail_open", _gw_mcp_fail_open),
         timeout=raw_config.get("timeout", _gw_mcp_timeout),
         retry_total=retry.get("total", _gw_mcp_retry_total),
         retry_backoff=retry.get("backoff_factor", _gw_mcp_retry_backoff),
         retry_status_codes=retry.get("status_codes", _gw_mcp_retry_status_codes),
+        # OAuth2 Client Credentials fields
+        oauth2_token_url=raw_config.get("oauth2_token_url"),
+        oauth2_client_id=raw_config.get("oauth2_client_id"),
+        oauth2_client_secret=raw_config.get("oauth2_client_secret"),
+        oauth2_scopes=raw_config.get("oauth2_scopes"),
     )
 
 

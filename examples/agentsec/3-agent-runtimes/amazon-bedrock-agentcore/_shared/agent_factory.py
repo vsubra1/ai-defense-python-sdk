@@ -1,7 +1,7 @@
 """Agent factory with agentsec protection.
 
-This module configures agentsec with explicit gateway/API URLs for LLM and MCP,
-then creates a Strands agent with demo tools.
+This module configures agentsec via agentsec.yaml, then creates a Strands
+agent with demo tools.
 
 The agentsec.protect() call patches botocore to intercept:
 - Bedrock calls (InvokeModel, Converse, etc.)
@@ -36,73 +36,33 @@ for _env_path in _env_paths:
         break
 
 # =============================================================================
-# Configure agentsec with explicit gateway/API URLs for LLM and MCP
+# Configure agentsec via agentsec.yaml
 # =============================================================================
 from aidefense.runtime import agentsec
 
+# Resolve agentsec.yaml path (container vs local development)
+_yaml_paths = [
+    Path("/app/agentsec.yaml"),  # Container deployment
+    Path(__file__).parent.parent.parent.parent / "agentsec.yaml",  # examples/agentsec/agentsec.yaml
+]
+
+_yaml_config = None
+for _yp in _yaml_paths:
+    if _yp.exists():
+        _yaml_config = str(_yp)
+        break
+
 
 def configure_agentsec():
-    """Configure agentsec protection with explicit URLs.
+    """Configure agentsec protection via agentsec.yaml.
     
     This function should be called BEFORE creating any boto3 clients or agents.
-    It configures agentsec with explicit gateway/API URLs for both LLM and MCP.
-    
-    Reads configuration from environment variables:
-    - AGENTSEC_LLM_INTEGRATION_MODE: "api" (inspection) or "gateway" (proxy)
-    - AGENTSEC_MCP_INTEGRATION_MODE: "api" (inspection) or "gateway" (proxy)
-    - API mode settings: AI_DEFENSE_API_MODE_LLM_ENDPOINT, etc.
-    - Gateway mode settings: AGENTSEC_BEDROCK_GATEWAY_URL, etc.
+    All gateway/API mode settings (URLs, keys, modes, fail-open, retry, etc.)
+    are defined in agentsec.yaml. Secrets are referenced via ${VAR_NAME} and
+    resolved from the environment (populated by load_dotenv above).
     """
     agentsec.protect(
-        # Integration mode: "api" (inspection) or "gateway" (proxy)
-        llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
-        mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
-        
-        # API Mode Configuration
-        api_mode={
-            "llm": {
-                "mode": os.getenv("AGENTSEC_API_MODE_LLM", "monitor"),
-                "endpoint": os.getenv("AI_DEFENSE_API_MODE_LLM_ENDPOINT"),
-                "api_key": os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
-            },
-            "mcp": {
-                "mode": os.getenv("AGENTSEC_API_MODE_MCP", "monitor"),
-                "endpoint": os.getenv("AI_DEFENSE_API_MODE_MCP_ENDPOINT"),
-                "api_key": os.getenv("AI_DEFENSE_API_MODE_MCP_API_KEY"),
-            },
-            "llm_defaults": {
-                "fail_open": os.getenv("AGENTSEC_API_MODE_FAIL_OPEN_LLM", "true").lower() == "true",
-            },
-            "mcp_defaults": {
-                "fail_open": os.getenv("AGENTSEC_API_MODE_FAIL_OPEN_MCP", "true").lower() == "true",
-            },
-        },
-        
-        # Gateway Mode Configuration
-        # Note: AgentCore operations use the Bedrock gateway configuration
-        gateway_mode={
-            "llm_gateways": {
-                "bedrock-default": {
-                    "gateway_url": os.getenv("AGENTSEC_BEDROCK_GATEWAY_URL"),
-                    "gateway_api_key": os.getenv("AGENTSEC_BEDROCK_GATEWAY_API_KEY"),
-                    "auth_mode": "aws_sigv4",
-                    "provider": "bedrock",
-                    "default": True,
-                },
-            },
-            "mcp_gateways": {
-                os.getenv("MCP_SERVER_URL", ""): {
-                    "gateway_url": os.getenv("AGENTSEC_MCP_GATEWAY_URL"),
-                },
-            },
-            "llm_defaults": {
-                "fail_open": os.getenv("AGENTSEC_GATEWAY_MODE_FAIL_OPEN_LLM", "true").lower() == "true",
-            },
-            "mcp_defaults": {
-                "fail_open": os.getenv("AGENTSEC_GATEWAY_MODE_FAIL_OPEN_MCP", "true").lower() == "true",
-            },
-        },
-        
+        config=_yaml_config,
         auto_dotenv=False,  # We already loaded .env manually
     )
     

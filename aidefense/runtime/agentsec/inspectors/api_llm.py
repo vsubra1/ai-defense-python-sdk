@@ -649,19 +649,18 @@ class LLMInspector:
 
             # Try to run the async close in an event loop
             try:
-                loop = asyncio.get_event_loop()
-                if not loop.is_closed() and not loop.is_running():
-                    loop.run_until_complete(_close_all())
-                    return
+                # Check if there's already a running loop (Python 3.10+)
+                loop = asyncio.get_running_loop()
+                # If we're inside a running loop, we can't use run_until_complete
+                # The resources will be cleaned up when the loop closes
             except RuntimeError:
-                pass
-            # Fallback: create a new event loop
-            try:
-                new_loop = asyncio.new_event_loop()
-                new_loop.run_until_complete(_close_all())
-                new_loop.close()
-            except Exception:
-                pass
+                # No running loop — create a new one to run cleanup
+                try:
+                    new_loop = asyncio.new_event_loop()
+                    new_loop.run_until_complete(_close_all())
+                    new_loop.close()
+                except Exception:
+                    pass
         except Exception as e:
             logger.debug(f"Could not close async session synchronously: {e}")
     

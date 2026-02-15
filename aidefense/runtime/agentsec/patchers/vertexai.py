@@ -87,6 +87,90 @@ def _enforce_decision(decision: Decision) -> None:
         raise SecurityPolicyError(decision)
 
 
+def _serialize_vertexai_part(part: Any) -> Optional[Dict]:
+    """Serialize a Vertex AI Part (proto-plus or dict) to a JSON-compatible dict.
+
+    Handles text, function_call, and function_response parts.
+    """
+    if isinstance(part, dict):
+        return part
+
+    # Try proto-plus to_dict first (vertexai SDK uses proto-plus)
+    if hasattr(type(part), "to_dict"):
+        try:
+            d = type(part).to_dict(part)
+            if d:
+                return d
+        except Exception:
+            pass
+
+    # Manual extraction
+    result: Dict[str, Any] = {}
+
+    if hasattr(part, "text") and part.text:
+        result["text"] = part.text
+
+    if hasattr(part, "function_call") and part.function_call:
+        fc = part.function_call
+        fc_dict: Dict[str, Any] = {}
+        if hasattr(fc, "name") and fc.name:
+            fc_dict["name"] = fc.name
+        if hasattr(fc, "args") and fc.args is not None:
+            args = fc.args
+            fc_dict["args"] = dict(args) if hasattr(args, "items") else args
+        if fc_dict:
+            result["functionCall"] = fc_dict
+
+    if hasattr(part, "function_response") and part.function_response:
+        fr = part.function_response
+        fr_dict: Dict[str, Any] = {}
+        if hasattr(fr, "name") and fr.name:
+            fr_dict["name"] = fr.name
+        if hasattr(fr, "response") and fr.response is not None:
+            resp = fr.response
+            fr_dict["response"] = dict(resp) if hasattr(resp, "items") else resp
+        if fr_dict:
+            result["functionResponse"] = fr_dict
+
+    return result if result else None
+
+
+def _serialize_vertexai_obj(obj: Any) -> Any:
+    """Serialize a Vertex AI SDK object (Tool, ToolConfig, etc.) to JSON-compatible form.
+
+    Handles proto-plus objects, dicts, and lists.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return obj
+    if isinstance(obj, (list, tuple)):
+        return [_serialize_vertexai_obj(item) for item in obj]
+    # Proto-plus
+    if hasattr(type(obj), "to_dict"):
+        try:
+            return type(obj).to_dict(obj)
+        except Exception:
+            pass
+    # Pydantic
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump(mode="json", by_alias=True, exclude_none=True)
+        except (TypeError, Exception):
+            try:
+                return obj.model_dump(exclude_none=True)
+            except Exception:
+                pass
+    if hasattr(obj, "dict"):
+        try:
+            return obj.dict(exclude_none=True)
+        except Exception:
+            pass
+    return obj
+
+
 def _handle_vertexai_gateway_call(
     model_name: str,
     contents: Any,
@@ -115,15 +199,26 @@ def _handle_vertexai_gateway_call(
     """
     import httpx
     
-    gateway_url = gw_settings.url
-    gateway_api_key = gw_settings.api_key
-    
-    if not gateway_url or not gateway_api_key:
-        logger.warning("Gateway mode enabled but Vertex AI gateway not configured")
+    if not gw_settings.url:
+        logger.warning("Gateway mode enabled but Vertex AI gateway URL not configured")
         raise SecurityPolicyError(
             Decision.block(reasons=["Vertex AI gateway not configured"]),
             "Gateway mode enabled but Vertex AI gateway not configured (check gateway_mode.llm_gateways for a vertexai provider entry in config)"
         )
+    
+    # Build auth headers based on auth_mode
+    if gw_settings.auth_mode == "google_adc":
+        from ._google_common import _build_google_auth_header
+        auth_headers = _build_google_auth_header(gw_settings)
+    else:
+        # api_key mode
+        if not gw_settings.api_key:
+            logger.warning("Gateway mode enabled but Vertex AI gateway api_key not configured")
+            raise SecurityPolicyError(
+                Decision.block(reasons=["Vertex AI gateway api_key not configured"]),
+                "Gateway mode enabled but Vertex AI gateway api_key not configured (auth_mode=api_key requires gateway_api_key)"
+            )
+        auth_headers = {"Authorization": f"Bearer {gw_settings.api_key}"}
     
     # Convert contents to dict format for the request
     contents_list = []
@@ -137,13 +232,14 @@ def _handle_vertexai_gateway_call(
                 elif hasattr(item, "role") and hasattr(item, "parts"):
                     parts_list = []
                     for part in item.parts:
-                        if hasattr(part, "text"):
-                            parts_list.append({"text": part.text})
-                    contents_list.append({"role": item.role, "parts": parts_list})
+                        part_dict = _serialize_vertexai_part(part)
+                        if part_dict:
+                            parts_list.append(part_dict)
+                    if parts_list:
+                        contents_list.append({"role": item.role, "parts": parts_list})
     
-    # Build native Vertex AI request
+    # Build native Vertex AI request body (model is in URL path, not body)
     request_body = {
-        "model": model_name,
         "contents": contents_list,
     }
     
@@ -160,9 +256,9 @@ def _handle_vertexai_gateway_call(
                 request_body["generationConfig"] = config_dict
     
     if tools:
-        request_body["tools"] = tools
+        request_body["tools"] = _serialize_vertexai_obj(tools)
     if tool_config:
-        request_body["toolConfig"] = tool_config
+        request_body["toolConfig"] = _serialize_vertexai_obj(tool_config)
     if system_instruction:
         if isinstance(system_instruction, str):
             request_body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
@@ -170,16 +266,29 @@ def _handle_vertexai_gateway_call(
             parts = [{"text": p.text} for p in system_instruction.parts if hasattr(p, "text")]
             request_body["systemInstruction"] = {"parts": parts}
     
+    # Build full Vertex AI gateway URL with API path
+    from ._google_common import build_vertexai_gateway_url
+    try:
+        full_gateway_url = build_vertexai_gateway_url(
+            gw_settings.url, model_name, gw_settings, streaming=False,
+        )
+    except ValueError as exc:
+        raise SecurityPolicyError(
+            Decision.block(reasons=[str(exc)]),
+            str(exc),
+        )
+    
     logger.debug(f"[GATEWAY] Sending native Vertex AI request to gateway")
+    logger.debug(f"[GATEWAY] URL: {full_gateway_url}")
     logger.debug(f"[GATEWAY] Model: {model_name}")
     
     try:
         with httpx.Client(timeout=float(gw_settings.timeout)) as client:
             response = client.post(
-                gateway_url,
+                full_gateway_url,
                 json=request_body,
                 headers={
-                    "Authorization": f"Bearer {gateway_api_key}",
+                    **auth_headers,
                     "Content-Type": "application/json",
                 },
             )
@@ -285,7 +394,11 @@ class _ContentWrapper:
 
 
 class _PartWrapper:
-    """Wrapper for part in Vertex AI response."""
+    """Wrapper for part in Vertex AI response.
+
+    Handles text parts, functionCall parts (model requesting a tool call),
+    and functionResponse parts (tool execution results).
+    """
     
     def __init__(self, part_data: Dict):
         self._data = part_data
@@ -293,6 +406,142 @@ class _PartWrapper:
     @property
     def text(self):
         return self._data.get("text", "")
+
+    @property
+    def function_call(self):
+        """Return a FunctionCall-like object if this part is a function call."""
+        fc_data = self._data.get("functionCall") or self._data.get("function_call")
+        if fc_data:
+            return _VertexFunctionCallWrapper(fc_data)
+        return None
+
+    @property
+    def function_response(self):
+        """Return a FunctionResponse-like object if this part is a function response."""
+        fr_data = self._data.get("functionResponse") or self._data.get("function_response")
+        if fr_data:
+            return _VertexFunctionResponseWrapper(fr_data)
+        return None
+
+
+class _VertexFunctionCallWrapper:
+    """Wrapper for functionCall in gateway response."""
+
+    def __init__(self, data: Dict):
+        self._data = data
+
+    @property
+    def name(self) -> str:
+        return self._data.get("name", "")
+
+    @property
+    def args(self) -> Dict:
+        return self._data.get("args", {})
+
+
+class _VertexFunctionResponseWrapper:
+    """Wrapper for functionResponse in gateway response."""
+
+    def __init__(self, data: Dict):
+        self._data = data
+
+    @property
+    def name(self) -> str:
+        return self._data.get("name", "")
+
+    @property
+    def response(self) -> Dict:
+        return self._data.get("response", {})
+
+
+def _handle_vertexai_gateway_call_streaming(
+    model_name: str,
+    contents: Any,
+    gw_settings: Any,
+    generation_config: Optional[Dict] = None,
+    tools: Optional[List] = None,
+    tool_config: Optional[Dict] = None,
+    system_instruction: Optional[Any] = None,
+) -> Any:
+    """Handle Vertex AI streaming call via AI Defense Gateway.
+
+    Calls the non-streaming gateway endpoint and wraps the result in a
+    fake streaming wrapper that yields the full response as a single chunk,
+    following the same pattern used by Bedrock's
+    ``_handle_bedrock_gateway_call_streaming``.
+    """
+    response_wrapper = _handle_vertexai_gateway_call(
+        model_name=model_name,
+        contents=contents,
+        gw_settings=gw_settings,
+        generation_config=generation_config,
+        tools=tools,
+        tool_config=tool_config,
+        system_instruction=system_instruction,
+    )
+    return _VertexAIGatewayStreamWrapper(response_wrapper)
+
+
+async def _handle_vertexai_gateway_call_streaming_async(
+    model_name: str,
+    contents: Any,
+    gw_settings: Any,
+    generation_config: Optional[Dict] = None,
+    tools: Optional[List] = None,
+    tool_config: Optional[Dict] = None,
+    system_instruction: Optional[Any] = None,
+) -> Any:
+    """Async version of _handle_vertexai_gateway_call_streaming."""
+    response_wrapper = await _handle_vertexai_gateway_call_async(
+        model_name=model_name,
+        contents=contents,
+        gw_settings=gw_settings,
+        generation_config=generation_config,
+        tools=tools,
+        tool_config=tool_config,
+        system_instruction=system_instruction,
+    )
+    return _AsyncVertexAIGatewayStreamWrapper(response_wrapper)
+
+
+class _VertexAIGatewayStreamWrapper:
+    """Wrap a non-streaming gateway response as a fake Vertex AI stream.
+
+    Yields the full response as a single chunk so that callers expecting
+    an iterable stream work correctly.  The chunk exposes the same
+    ``candidates[].content.parts[].text`` attribute path as a real
+    Vertex AI streaming chunk.
+    """
+
+    def __init__(self, response_wrapper):
+        self._response = response_wrapper
+        self._yielded = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if not self._yielded:
+            self._yielded = True
+            return self._response
+        raise StopIteration
+
+
+class _AsyncVertexAIGatewayStreamWrapper:
+    """Async version of _VertexAIGatewayStreamWrapper."""
+
+    def __init__(self, response_wrapper):
+        self._response = response_wrapper
+        self._yielded = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._yielded:
+            self._yielded = True
+            return self._response
+        raise StopAsyncIteration
 
 
 class GoogleStreamingInspectionWrapper:
@@ -434,14 +683,25 @@ async def _handle_vertexai_gateway_call_async(
     import httpx
     
     gateway_url = gw_settings.url
-    gateway_api_key = gw_settings.api_key
-    
-    if not gateway_url or not gateway_api_key:
-        logger.warning("Gateway mode enabled but Vertex AI gateway not configured")
+    if not gateway_url:
+        logger.warning("Gateway mode enabled but Vertex AI gateway URL not configured")
         raise SecurityPolicyError(
             Decision.block(reasons=["Vertex AI gateway not configured"]),
             "Gateway mode enabled but Vertex AI gateway not configured (check gateway_mode.llm_gateways for a vertexai provider entry in config)"
         )
+    
+    # Build auth headers based on auth_mode
+    if gw_settings.auth_mode == "google_adc":
+        from ._google_common import _build_google_auth_header
+        auth_headers = _build_google_auth_header(gw_settings)
+    else:
+        if not gw_settings.api_key:
+            logger.warning("Gateway mode enabled but Vertex AI gateway api_key not configured")
+            raise SecurityPolicyError(
+                Decision.block(reasons=["Vertex AI gateway api_key not configured"]),
+                "Gateway mode enabled but Vertex AI gateway api_key not configured (auth_mode=api_key requires gateway_api_key)"
+            )
+        auth_headers = {"Authorization": f"Bearer {gw_settings.api_key}"}
     
     # Convert contents to dict format
     contents_list = []
@@ -455,13 +715,14 @@ async def _handle_vertexai_gateway_call_async(
                 elif hasattr(item, "role") and hasattr(item, "parts"):
                     parts_list = []
                     for part in item.parts:
-                        if hasattr(part, "text"):
-                            parts_list.append({"text": part.text})
-                    contents_list.append({"role": item.role, "parts": parts_list})
+                        part_dict = _serialize_vertexai_part(part)
+                        if part_dict:
+                            parts_list.append(part_dict)
+                    if parts_list:
+                        contents_list.append({"role": item.role, "parts": parts_list})
     
-    # Build native Vertex AI request
+    # Build native Vertex AI request body (model is in URL path, not body)
     request_body = {
-        "model": model_name,
         "contents": contents_list,
     }
     
@@ -478,9 +739,9 @@ async def _handle_vertexai_gateway_call_async(
                 request_body["generationConfig"] = config_dict
     
     if tools:
-        request_body["tools"] = tools
+        request_body["tools"] = _serialize_vertexai_obj(tools)
     if tool_config:
-        request_body["toolConfig"] = tool_config
+        request_body["toolConfig"] = _serialize_vertexai_obj(tool_config)
     if system_instruction:
         if isinstance(system_instruction, str):
             request_body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
@@ -488,15 +749,28 @@ async def _handle_vertexai_gateway_call_async(
             parts = [{"text": p.text} for p in system_instruction.parts if hasattr(p, "text")]
             request_body["systemInstruction"] = {"parts": parts}
     
+    # Build full Vertex AI gateway URL with API path
+    from ._google_common import build_vertexai_gateway_url
+    try:
+        full_gateway_url = build_vertexai_gateway_url(
+            gw_settings.url, model_name, gw_settings, streaming=False,
+        )
+    except ValueError as exc:
+        raise SecurityPolicyError(
+            Decision.block(reasons=[str(exc)]),
+            str(exc),
+        )
+    
     logger.debug(f"[GATEWAY] Sending native Vertex AI request to gateway (async)")
+    logger.debug(f"[GATEWAY] URL: {full_gateway_url}")
     
     try:
         async with httpx.AsyncClient(timeout=float(gw_settings.timeout)) as client:
             response = await client.post(
-                gateway_url,
+                full_gateway_url,
                 json=request_body,
                 headers={
-                    "Authorization": f"Bearer {gateway_api_key}",
+                    **auth_headers,
                     "Content-Type": "application/json",
                 },
             )
@@ -577,6 +851,7 @@ def _inspect_vertexai_sync(wrapped, instance, args, kwargs, entry="generate_cont
     elif hasattr(instance, "_model_name"):
         model_name = instance._model_name
     
+    set_inspection_context(done=False)
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] VertexAI.{entry} - inspection skipped (mode=off or already done)")
         return wrapped(*args, **kwargs)
@@ -593,7 +868,6 @@ def _inspect_vertexai_sync(wrapped, instance, args, kwargs, entry="generate_cont
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL: {model_name}")
     logger.debug(f"║ Operation: VertexAI.{entry} | LLM Mode: {mode} | Integration: {integration_mode}")
@@ -603,7 +877,7 @@ def _inspect_vertexai_sync(wrapped, instance, args, kwargs, entry="generate_cont
     gw_settings = resolve_gateway_settings("vertexai")
     if gw_settings:
         logger.debug(f"[PATCHED CALL] VertexAI.{entry} - Gateway mode - routing to AI Defense Gateway")
-        if not stream:  # Non-streaming only for now
+        if not stream:
             return _handle_vertexai_gateway_call(
                 model_name=model_name,
                 contents=contents,
@@ -614,7 +888,16 @@ def _inspect_vertexai_sync(wrapped, instance, args, kwargs, entry="generate_cont
                 system_instruction=getattr(instance, "system_instruction", None),
             )
         else:
-            logger.warning(f"[PATCHED CALL] Gateway mode streaming not yet supported for VertexAI, falling back to API mode")
+            logger.debug(f"[PATCHED CALL] VertexAI.{entry} - Gateway mode streaming via non-streaming gateway call")
+            return _handle_vertexai_gateway_call_streaming(
+                model_name=model_name,
+                contents=contents,
+                gw_settings=gw_settings,
+                generation_config=kwargs.get("generation_config"),
+                tools=kwargs.get("tools"),
+                tool_config=kwargs.get("tool_config"),
+                system_instruction=getattr(instance, "system_instruction", None),
+            )
     
     # API mode (default): use LLMInspector for inspection
     # Pre-call inspection
@@ -690,6 +973,7 @@ async def _inspect_vertexai_async(wrapped, instance, args, kwargs, entry="genera
     elif hasattr(instance, "_model_name"):
         model_name = instance._model_name
     
+    set_inspection_context(done=False)
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] VertexAI.{entry} - inspection skipped")
         return await wrapped(*args, **kwargs)
@@ -706,7 +990,6 @@ async def _inspect_vertexai_async(wrapped, instance, args, kwargs, entry="genera
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL (async): {model_name}")
     logger.debug(f"║ Operation: VertexAI.{entry} | LLM Mode: {mode} | Integration: {integration_mode}")
@@ -716,7 +999,7 @@ async def _inspect_vertexai_async(wrapped, instance, args, kwargs, entry="genera
     gw_settings = resolve_gateway_settings("vertexai")
     if gw_settings:
         logger.debug(f"[PATCHED CALL] VertexAI.{entry} - Gateway mode - routing to AI Defense Gateway")
-        if not stream:  # Non-streaming only for now
+        if not stream:
             return await _handle_vertexai_gateway_call_async(
                 model_name=model_name,
                 contents=contents,
@@ -727,7 +1010,16 @@ async def _inspect_vertexai_async(wrapped, instance, args, kwargs, entry="genera
                 system_instruction=getattr(instance, "system_instruction", None),
             )
         else:
-            logger.warning(f"[PATCHED CALL] Gateway mode streaming not yet supported for VertexAI, falling back to API mode")
+            logger.debug(f"[PATCHED CALL] VertexAI.{entry} - Gateway mode streaming via non-streaming gateway call (async)")
+            return await _handle_vertexai_gateway_call_streaming_async(
+                model_name=model_name,
+                contents=contents,
+                gw_settings=gw_settings,
+                generation_config=kwargs.get("generation_config"),
+                tools=kwargs.get("tools"),
+                tool_config=kwargs.get("tool_config"),
+                system_instruction=getattr(instance, "system_instruction", None),
+            )
     
     # API mode (default): use LLMInspector for inspection
     # Pre-call inspection

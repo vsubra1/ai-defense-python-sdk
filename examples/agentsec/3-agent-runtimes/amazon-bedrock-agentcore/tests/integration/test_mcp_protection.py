@@ -46,13 +46,25 @@ if env_path.exists():
 # =============================================================================
 from aidefense.runtime import agentsec
 
+# Resolve agentsec.yaml path (needed for gateway mode MCP gateway mappings)
+_yaml_paths = [
+    Path(__file__).resolve().parent.parent.parent.parent.parent / "agentsec.yaml",  # examples/agentsec/agentsec.yaml
+]
+_yaml_config = None
+for _yp in _yaml_paths:
+    if _yp.exists():
+        _yaml_config = str(_yp)
+        break
+
 agentsec.protect(
+    config=_yaml_config,
     llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
     mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
     api_mode={
         "llm": {"mode": os.getenv("AGENTSEC_API_MODE_LLM", "monitor")},
         "mcp": {"mode": os.getenv("AGENTSEC_API_MODE_MCP", "monitor")},
     },
+    auto_dotenv=False,  # We already loaded .env manually
 )
 
 print(f"[agentsec] Patched clients: {agentsec.get_patched_clients()}")

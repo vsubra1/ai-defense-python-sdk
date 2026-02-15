@@ -163,23 +163,15 @@ class TestAgentFactory:
         """Test that dotenv is imported for env loading."""
         assert "from dotenv import load_dotenv" in agent_factory_code, "Should import load_dotenv"
     
-    def test_llm_integration_mode_configurable(self, agent_factory_code):
-        """Test that LLM integration mode is configurable."""
-        assert "llm_integration_mode" in agent_factory_code, "Should configure llm_integration_mode"
+    def test_yaml_config_used(self, agent_factory_code):
+        """Test that agentsec.yaml config file is used."""
+        assert "agentsec.yaml" in agent_factory_code, \
+            "Should reference agentsec.yaml config file"
     
-    def test_api_mode_endpoint_configurable(self, agent_factory_code):
-        """Test that API mode endpoint is configurable."""
-        assert "endpoint" in agent_factory_code, "Should configure api endpoint"
-    
-    def test_llm_gateways_configured(self, agent_factory_code):
-        """Test that llm_gateways are configured."""
-        assert '"llm_gateways"' in agent_factory_code or "'llm_gateways'" in agent_factory_code, \
-            "Should configure llm_gateways"
-    
-    def test_bedrock_gateway_configurable(self, agent_factory_code):
-        """Test that Bedrock gateway is configurable."""
-        assert "AGENTSEC_BEDROCK_GATEWAY_URL" in agent_factory_code, \
-            "Should configure AGENTSEC_BEDROCK_GATEWAY_URL"
+    def test_config_param_passed(self, agent_factory_code):
+        """Test that config= parameter is passed to protect()."""
+        assert "config=" in agent_factory_code, \
+            "Should pass config= parameter to agentsec.protect()"
     
     def test_strands_agent_created(self, agent_factory_code):
         """Test that Strands Agent is created."""

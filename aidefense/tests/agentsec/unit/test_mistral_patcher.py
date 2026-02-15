@@ -144,14 +144,15 @@ class TestMistralGatewayMode:
         _state.set_state(initialized=True, llm_integration_mode="api")
         assert resolve_gateway_settings("mistral") is None
 
-    def test_resolve_gateway_returns_none_when_not_configured(self):
+    def test_resolve_gateway_raises_when_not_configured(self):
         from aidefense.runtime.agentsec.patchers._base import resolve_gateway_settings
         _state.set_state(
             initialized=True,
             llm_integration_mode="gateway",
             gateway_mode={},
         )
-        assert resolve_gateway_settings("mistral") is None
+        with pytest.raises(SecurityPolicyError, match="no gateway configuration found for provider"):
+            resolve_gateway_settings("mistral")
 
 
 class TestMistralPatchApply:

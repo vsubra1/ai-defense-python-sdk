@@ -47,52 +47,28 @@ if _shared_env.exists():
     load_dotenv(_shared_env)
 
 # =============================================================================
-# Configure agentsec protection (BEFORE importing any AI library)
+# Configure agentsec via agentsec.yaml (BEFORE importing any AI library)
 # =============================================================================
 from aidefense.runtime import agentsec
 
+# Resolve agentsec.yaml path (container vs local development)
+_yaml_paths = [
+    Path("/app/agentsec.yaml"),  # Container deployment
+    Path(__file__).parent.parent.parent.parent / "agentsec.yaml",  # examples/agentsec/agentsec.yaml
+]
+
+_yaml_config = None
+for _yp in _yaml_paths:
+    if _yp.exists():
+        _yaml_config = str(_yp)
+        break
+
+# All gateway/API mode settings (URLs, keys, modes, fail-open, retry, etc.)
+# are defined in agentsec.yaml. Secrets are referenced via ${VAR_NAME} and
+# resolved from the environment (populated by load_dotenv above).
 agentsec.protect(
-    # AI Defense integration mode: "api" or "gateway"
-    llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
-    mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
-    
-    # API Mode Configuration
-    api_mode={
-        "llm": {
-            "mode": os.getenv("AGENTSEC_API_MODE_LLM", "monitor"),
-            "endpoint": os.getenv("AI_DEFENSE_API_MODE_LLM_ENDPOINT"),
-            "api_key": os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
-        },
-        "mcp": {
-            "mode": os.getenv("AGENTSEC_API_MODE_MCP", "monitor"),
-            "endpoint": os.getenv("AI_DEFENSE_API_MODE_MCP_ENDPOINT"),
-            "api_key": os.getenv("AI_DEFENSE_API_MODE_MCP_API_KEY"),
-        },
-        "llm_defaults": {"fail_open": True},
-        "mcp_defaults": {"fail_open": True},
-    },
-    
-    # Gateway Mode Configuration (LLM)
-    # Uses existing Azure OpenAI gateway settings from .env
-    gateway_mode={
-        "llm_gateways": {
-            "azure-openai-default": {
-                "gateway_url": os.getenv("AGENTSEC_AZURE_OPENAI_GATEWAY_URL"),
-                "gateway_api_key": os.getenv("AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY"),
-                "provider": "azure_openai",
-                "default": True,
-            },
-        },
-        "mcp_gateways": {
-            os.getenv("MCP_SERVER_URL", ""): {
-                "gateway_url": os.getenv("AGENTSEC_MCP_GATEWAY_URL"),
-            },
-        },
-        "mcp_defaults": {"fail_open": True},
-    },
-    
-    # Disable auto .env loading since we did it manually
-    auto_dotenv=False,
+    config=_yaml_config,
+    auto_dotenv=False,  # We already loaded .env manually
 )
 
 print(f"[agentsec] Patched: {agentsec.get_patched_clients()}")

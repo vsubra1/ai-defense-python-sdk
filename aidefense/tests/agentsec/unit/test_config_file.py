@@ -32,7 +32,7 @@ gateway_mode:
     fail_open: true
     timeout: 3
   llm_gateways:
-    openai-default:
+    openai-1:
       gateway_url: https://gw.example.com
       provider: openai
       default: true
@@ -41,7 +41,7 @@ gateway_mode:
         result = load_config_file(path)
         assert result["gateway_mode"]["llm_defaults"]["fail_open"] is True
         assert result["gateway_mode"]["llm_defaults"]["timeout"] == 3
-        assert result["gateway_mode"]["llm_gateways"]["openai-default"]["gateway_url"] == "https://gw.example.com"
+        assert result["gateway_mode"]["llm_gateways"]["openai-1"]["gateway_url"] == "https://gw.example.com"
         os.unlink(path)
 
     def test_env_var_substitution(self, monkeypatch):
@@ -49,21 +49,21 @@ gateway_mode:
         content = """\
 gateway_mode:
   llm_gateways:
-    openai-default:
+    openai-1:
       gateway_api_key: ${TEST_GW_KEY}
       provider: openai
       default: true
 """
         path = self._write_yaml(content)
         result = load_config_file(path)
-        assert result["gateway_mode"]["llm_gateways"]["openai-default"]["gateway_api_key"] == "my-secret-key"
+        assert result["gateway_mode"]["llm_gateways"]["openai-1"]["gateway_api_key"] == "my-secret-key"
         os.unlink(path)
 
     def test_env_var_not_set_raises(self):
         content = """\
 gateway_mode:
   llm_gateways:
-    openai-default:
+    openai-1:
       gateway_api_key: ${NONEXISTENT_VAR_12345}
       provider: openai
       default: true
@@ -106,6 +106,94 @@ url: https://${MY_HOST}/v1
         assert result["url"] == "https://gw.example.com/v1"
         os.unlink(path)
 
+    def test_bedrock_gateway_aws_env_substitution(self, monkeypatch):
+        """AWS credential fields resolve ${VAR} from environment."""
+        monkeypatch.setenv("MY_REGION", "eu-west-1")
+        monkeypatch.setenv("MY_PROFILE", "team-b")
+        monkeypatch.setenv("MY_ACCESS_KEY", "AKIAEXAMPLE")
+        monkeypatch.setenv("MY_SECRET_KEY", "secret123")
+        monkeypatch.setenv("MY_SESSION_TOKEN", "token456")
+        monkeypatch.setenv("MY_ROLE_ARN", "arn:aws:iam::123456789012:role/test")
+        content = """\
+gateway_mode:
+  llm_gateways:
+    bedrock-1:
+      gateway_url: https://gw.example.com
+      auth_mode: aws_sigv4
+      provider: bedrock
+      aws_region: ${MY_REGION}
+      aws_profile: ${MY_PROFILE}
+      aws_access_key_id: ${MY_ACCESS_KEY}
+      aws_secret_access_key: ${MY_SECRET_KEY}
+      aws_session_token: ${MY_SESSION_TOKEN}
+      aws_role_arn: ${MY_ROLE_ARN}
+"""
+        path = self._write_yaml(content)
+        result = load_config_file(path)
+        gw = result["gateway_mode"]["llm_gateways"]["bedrock-1"]
+        assert gw["aws_region"] == "eu-west-1"
+        assert gw["aws_profile"] == "team-b"
+        assert gw["aws_access_key_id"] == "AKIAEXAMPLE"
+        assert gw["aws_secret_access_key"] == "secret123"
+        assert gw["aws_session_token"] == "token456"
+        assert gw["aws_role_arn"] == "arn:aws:iam::123456789012:role/test"
+        os.unlink(path)
+
+    def test_bedrock_gateway_aws_env_not_set_raises(self):
+        """Unset env var in AWS field raises ConfigurationError."""
+        content = """\
+gateway_mode:
+  llm_gateways:
+    bedrock-1:
+      gateway_url: https://gw.example.com
+      aws_access_key_id: ${BEDROCK_UNSET_KEY}
+"""
+        path = self._write_yaml(content)
+        with pytest.raises(ConfigurationError, match="BEDROCK_UNSET_KEY"):
+            load_config_file(path)
+        os.unlink(path)
+
+    def test_vertexai_gateway_gcp_env_substitution(self, monkeypatch):
+        """GCP credential fields resolve ${VAR} from environment."""
+        monkeypatch.setenv("MY_GCP_PROJECT", "my-project-id")
+        monkeypatch.setenv("MY_GCP_LOCATION", "europe-west4")
+        monkeypatch.setenv("MY_SA_KEY_FILE", "/path/to/key.json")
+        monkeypatch.setenv("MY_TARGET_SA", "sa@project.iam.gserviceaccount.com")
+        content = """\
+gateway_mode:
+  llm_gateways:
+    vertexai-1:
+      gateway_url: https://gw.example.com
+      auth_mode: google_adc
+      provider: vertexai
+      gcp_project: ${MY_GCP_PROJECT}
+      gcp_location: ${MY_GCP_LOCATION}
+      gcp_service_account_key_file: ${MY_SA_KEY_FILE}
+      gcp_target_service_account: ${MY_TARGET_SA}
+"""
+        path = self._write_yaml(content)
+        result = load_config_file(path)
+        gw = result["gateway_mode"]["llm_gateways"]["vertexai-1"]
+        assert gw["gcp_project"] == "my-project-id"
+        assert gw["gcp_location"] == "europe-west4"
+        assert gw["gcp_service_account_key_file"] == "/path/to/key.json"
+        assert gw["gcp_target_service_account"] == "sa@project.iam.gserviceaccount.com"
+        os.unlink(path)
+
+    def test_vertexai_gateway_gcp_env_not_set_raises(self):
+        """Unset env var in GCP field raises ConfigurationError."""
+        content = """\
+gateway_mode:
+  llm_gateways:
+    vertexai-1:
+      gateway_url: https://gw.example.com
+      gcp_project: ${VERTEXAI_UNSET_PROJECT}
+"""
+        path = self._write_yaml(content)
+        with pytest.raises(ConfigurationError, match="VERTEXAI_UNSET_PROJECT"):
+            load_config_file(path)
+        os.unlink(path)
+
     def test_non_string_values_preserved(self):
         """Integers, booleans, lists pass through unchanged."""
         content = """\
@@ -118,4 +206,78 @@ status_codes: [429, 500]
         assert result["timeout"] == 5
         assert result["fail_open"] is True
         assert result["status_codes"] == [429, 500]
+        os.unlink(path)
+
+    def test_mcp_gateway_auth_mode_none(self):
+        """MCP gateway with auth_mode: none is parsed correctly."""
+        content = """\
+gateway_mode:
+  mcp_gateways:
+    https://mcp.example.com:
+      gateway_url: https://gw.example.com/mcp
+      auth_mode: none
+"""
+        path = self._write_yaml(content)
+        result = load_config_file(path)
+        gw = result["gateway_mode"]["mcp_gateways"]["https://mcp.example.com"]
+        assert gw["gateway_url"] == "https://gw.example.com/mcp"
+        assert gw["auth_mode"] == "none"
+        os.unlink(path)
+
+    def test_mcp_gateway_auth_mode_api_key(self, monkeypatch):
+        """MCP gateway with auth_mode: api_key resolves env var."""
+        monkeypatch.setenv("MY_MCP_KEY", "secret-mcp-key")
+        content = """\
+gateway_mode:
+  mcp_gateways:
+    https://mcp.example.com:
+      gateway_url: https://gw.example.com/mcp
+      auth_mode: api_key
+      gateway_api_key: ${MY_MCP_KEY}
+"""
+        path = self._write_yaml(content)
+        result = load_config_file(path)
+        gw = result["gateway_mode"]["mcp_gateways"]["https://mcp.example.com"]
+        assert gw["auth_mode"] == "api_key"
+        assert gw["gateway_api_key"] == "secret-mcp-key"
+        os.unlink(path)
+
+    def test_mcp_gateway_auth_mode_oauth2(self, monkeypatch):
+        """MCP gateway with auth_mode: oauth2_client_credentials resolves env vars."""
+        monkeypatch.setenv("MY_OAUTH_CID", "client-123")
+        monkeypatch.setenv("MY_OAUTH_SECRET", "secret-456")
+        content = """\
+gateway_mode:
+  mcp_gateways:
+    https://secure-mcp.example.com:
+      gateway_url: https://gw.example.com/mcp/secure
+      auth_mode: oauth2_client_credentials
+      oauth2_token_url: https://auth.example.com/oauth/token
+      oauth2_client_id: ${MY_OAUTH_CID}
+      oauth2_client_secret: ${MY_OAUTH_SECRET}
+      oauth2_scopes: "read write"
+"""
+        path = self._write_yaml(content)
+        result = load_config_file(path)
+        gw = result["gateway_mode"]["mcp_gateways"]["https://secure-mcp.example.com"]
+        assert gw["auth_mode"] == "oauth2_client_credentials"
+        assert gw["oauth2_token_url"] == "https://auth.example.com/oauth/token"
+        assert gw["oauth2_client_id"] == "client-123"
+        assert gw["oauth2_client_secret"] == "secret-456"
+        assert gw["oauth2_scopes"] == "read write"
+        os.unlink(path)
+
+    def test_mcp_gateway_oauth2_env_not_set_raises(self):
+        """Unset env var in OAuth2 field raises ConfigurationError."""
+        content = """\
+gateway_mode:
+  mcp_gateways:
+    https://mcp.example.com:
+      gateway_url: https://gw.example.com/mcp
+      auth_mode: oauth2_client_credentials
+      oauth2_client_id: ${MCP_OAUTH_UNSET_CID}
+"""
+        path = self._write_yaml(content)
+        with pytest.raises(ConfigurationError, match="MCP_OAUTH_UNSET_CID"):
+            load_config_file(path)
         os.unlink(path)

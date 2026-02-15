@@ -45,11 +45,12 @@ if shared_env.exists():
 from aidefense.runtime import agentsec
 config_path = str(Path(__file__).parent.parent.parent / "agentsec.yaml")
 # Allow integration test script to override YAML integration mode via env vars
-agentsec.protect(
-    config=config_path,
-    llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE"),
-    mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE"),
-)
+_protect_kwargs = {}
+if os.getenv("AGENTSEC_LLM_INTEGRATION_MODE"):
+    _protect_kwargs["llm_integration_mode"] = os.getenv("AGENTSEC_LLM_INTEGRATION_MODE")
+if os.getenv("AGENTSEC_MCP_INTEGRATION_MODE"):
+    _protect_kwargs["mcp_integration_mode"] = os.getenv("AGENTSEC_MCP_INTEGRATION_MODE")
+agentsec.protect(config=config_path, **_protect_kwargs)
 
 # That's it! Now import your frameworks normally
 #
@@ -241,16 +242,15 @@ def create_agents(llm_config):
     assistant = AssistantAgent(
         name="assistant",
         llm_config=llm_config,
-        system_message="""You are a helpful assistant with access to the fetch_tool function.
+        system_message="""You are a helpful assistant with access to the fetch_url tool.
 
-CRITICAL INSTRUCTIONS:
-1. When the user asks to fetch a URL or asks about a webpage, you MUST use the fetch_tool function.
-2. ALWAYS use the tool to get actual content rather than guessing what a page contains.
-3. After fetching, summarize the content for the user.
+When the user asks to fetch a URL or asks about a webpage, use the fetch_url tool.
+Always use the tool to get actual content rather than guessing what a page contains.
+After fetching, summarize the content for the user.
 
-Tool: fetch_tool(url='https://example.com')
+Tool usage: fetch_url(url='https://example.com')
 
-When you have answered the question, end your response with TERMINATE.""",
+Conclude your answer with the word TERMINATE.""",
     )
     logger.debug("Assistant agent created")
     
@@ -267,8 +267,8 @@ When you have answered the question, end your response with TERMINATE.""",
     # Register the fetch_url tool (MCP_SERVER_URL points to fetch server)
     if _mcp_url:
         @user_proxy.register_for_execution()
-        @assistant.register_for_llm(description="Fetch the contents of a URL. Use this when the user asks to fetch a webpage.")
-        def fetch_tool(url: str) -> str:
+        @assistant.register_for_llm(name="fetch_url", description="Fetch the contents of a URL. Use this when the user asks to fetch a webpage.")
+        def fetch_url_tool(url: str) -> str:
             """Fetch the contents of a URL."""
             return fetch_url(url)
         logger.debug("fetch_url tool registered")

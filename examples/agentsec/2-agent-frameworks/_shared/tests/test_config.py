@@ -103,12 +103,16 @@ openai:
 llm_settings:
   temperature: 0.7
 """)
-        os.chdir(tmp_path)
-        config = load_config(str(config_file))
-        
-        assert config["provider"] == "openai"
-        assert config["openai"]["model"] == "gpt-4"
-        assert config["llm_settings"]["temperature"] == 0.7
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            config = load_config(str(config_file))
+            
+            assert config["provider"] == "openai"
+            assert config["openai"]["model"] == "gpt-4"
+            assert config["llm_settings"]["temperature"] == 0.7
+        finally:
+            os.chdir(original_cwd)
     
     def test_load_config_with_env_resolution(self, tmp_path, monkeypatch):
         """Test that env vars are resolved during loading."""
@@ -126,9 +130,13 @@ openai:
     
     def test_missing_config_raises_error(self, tmp_path):
         """Test FileNotFoundError for missing config."""
-        os.chdir(tmp_path)
-        with pytest.raises(FileNotFoundError):
-            load_config("nonexistent.yaml")
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            with pytest.raises(FileNotFoundError):
+                load_config("nonexistent.yaml")
+        finally:
+            os.chdir(original_cwd)
     
     def test_config_file_env_var(self, tmp_path, monkeypatch):
         """Test CONFIG_FILE env var selects config."""
@@ -136,10 +144,14 @@ openai:
         config_file.write_text("provider: azure")
         
         monkeypatch.setenv("CONFIG_FILE", str(config_file))
-        os.chdir(tmp_path)
-        
-        config = load_config()
-        assert config["provider"] == "azure"
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            
+            config = load_config()
+            assert config["provider"] == "azure"
+        finally:
+            os.chdir(original_cwd)
     
     def test_empty_config_returns_empty_dict(self, tmp_path):
         """Test empty YAML returns empty dict."""

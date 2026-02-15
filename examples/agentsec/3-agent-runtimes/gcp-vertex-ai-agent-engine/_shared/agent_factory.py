@@ -51,12 +51,24 @@ GOOGLE_AI_SDK = os.getenv("GOOGLE_AI_SDK", "vertexai")  # "vertexai" or "google_
 # =============================================================================
 # Configure agentsec protection (LAZY - initialized on first use)
 # =============================================================================
+# Resolve agentsec.yaml path (container vs local development)
+_yaml_paths = [
+    Path("/app/agentsec.yaml"),  # Container deployment
+    Path(__file__).parent.parent.parent.parent / "agentsec.yaml",  # examples/agentsec/agentsec.yaml
+]
+
+_yaml_config = None
+for _yp in _yaml_paths:
+    if _yp.exists():
+        _yaml_config = str(_yp)
+        break
+
 # Track if agentsec has been initialized
 _agentsec_initialized = False
 
 def _initialize_agentsec():
     """
-    Initialize agentsec protection lazily.
+    Initialize agentsec protection lazily via agentsec.yaml.
     This is called on first use to avoid import-time dependencies.
     
     IMPORTANT: This lazy initialization is KEY for Agent Engine deployment.
@@ -65,6 +77,10 @@ def _initialize_agentsec():
     
     DO NOT revert to module-level agentsec.protect() call - it will break
     Agent Engine deployments with "No module named 'wrapt'" errors.
+    
+    All gateway/API mode settings (URLs, keys, modes, fail-open, retry, etc.)
+    are defined in agentsec.yaml. Secrets are referenced via ${VAR_NAME} and
+    resolved from the environment (populated by load_dotenv above).
     """
     global _agentsec_initialized
     if _agentsec_initialized:
@@ -74,54 +90,8 @@ def _initialize_agentsec():
     from aidefense.runtime import agentsec
     
     agentsec.protect(
-        # AI Defense integration mode: "api" or "gateway"
-        llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
-        mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
-        
-        # API Mode Configuration
-        api_mode={
-            "llm": {
-                "mode": os.getenv("AGENTSEC_API_MODE_LLM", "monitor"),
-                "endpoint": os.getenv("AI_DEFENSE_API_MODE_LLM_ENDPOINT"),
-                "api_key": os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
-            },
-            "mcp": {
-                "mode": os.getenv("AGENTSEC_API_MODE_MCP", "monitor"),
-                "endpoint": os.getenv("AI_DEFENSE_API_MODE_MCP_ENDPOINT"),
-                "api_key": os.getenv("AI_DEFENSE_API_MODE_MCP_API_KEY"),
-            },
-            "llm_defaults": {"fail_open": True},
-            "mcp_defaults": {"fail_open": True},
-        },
-        
-        # Gateway Mode Configuration (LLM)
-        gateway_mode={
-            "llm_gateways": {
-                "vertexai-default": {
-                    "gateway_url": os.getenv("AGENTSEC_VERTEXAI_GATEWAY_URL"),
-                    "gateway_api_key": os.getenv("AGENTSEC_VERTEXAI_GATEWAY_API_KEY"),
-                    "auth_mode": "google_adc",
-                    "provider": "vertexai",
-                    "default": True,
-                },
-                "google-genai-default": {
-                    "gateway_url": os.getenv("AGENTSEC_GOOGLE_GENAI_GATEWAY_URL") or os.getenv("AGENTSEC_VERTEXAI_GATEWAY_URL"),
-                    "gateway_api_key": os.getenv("AGENTSEC_GOOGLE_GENAI_GATEWAY_API_KEY") or os.getenv("AGENTSEC_VERTEXAI_GATEWAY_API_KEY"),
-                    "auth_mode": "google_adc",
-                    "provider": "google_genai",
-                    "default": True,
-                },
-            },
-            "mcp_gateways": {
-                os.getenv("MCP_SERVER_URL", ""): {
-                    "gateway_url": os.getenv("AGENTSEC_MCP_GATEWAY_URL"),
-                },
-            },
-            "mcp_defaults": {"fail_open": True},
-        },
-        
-        # Disable auto .env loading since we did it manually
-        auto_dotenv=False,
+        config=_yaml_config,
+        auto_dotenv=False,  # We already loaded .env manually
     )
     
     print(f"[agentsec] SDK: {GOOGLE_AI_SDK} | Patched: {agentsec.get_patched_clients()}")

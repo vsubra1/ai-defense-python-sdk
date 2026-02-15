@@ -22,7 +22,7 @@ class TestSetStateWithGatewayMode:
             llm_integration_mode="gateway",
             gateway_mode={
                 "llm_gateways": {
-                    "openai-default": {
+                    "openai-1": {
                         "gateway_url": "https://gw/openai",
                         "gateway_api_key": "k1",
                         "provider": "openai",
@@ -63,7 +63,7 @@ class TestSetStateWithGatewayMode:
             llm_integration_mode="gateway",
             gateway_mode={
                 "llm_gateways": {
-                    "bedrock-analytics": {
+                    "bedrock-2": {
                         "gateway_url": "https://gw/analytics",
                         "provider": "bedrock",
                         # no default: true
@@ -294,7 +294,7 @@ class TestResolveGatewaySettings:
             initialized=True,
             gateway_mode={
                 "llm_gateways": {
-                    "bedrock-default": {
+                    "bedrock-1": {
                         "gateway_url": "https://x",
                         "auth_mode": "aws_sigv4",
                         "provider": "bedrock",
@@ -309,6 +309,72 @@ class TestResolveGatewaySettings:
         )
         assert settings.auth_mode == "aws_sigv4"
 
+    def test_resolve_llm_aws_fields_passthrough(self):
+        """All six AWS fields are passed through from raw config."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_llm_gateway_settings(
+            {
+                "gateway_url": "https://gw.example.com",
+                "auth_mode": "aws_sigv4",
+                "aws_region": "eu-west-1",
+                "aws_profile": "team-b",
+                "aws_access_key_id": "AKIAEXAMPLE",
+                "aws_secret_access_key": "secret123",
+                "aws_session_token": "token456",
+                "aws_role_arn": "arn:aws:iam::123456789012:role/test-role",
+            },
+            provider="bedrock",
+        )
+        assert settings.aws_region == "eu-west-1"
+        assert settings.aws_profile == "team-b"
+        assert settings.aws_access_key_id == "AKIAEXAMPLE"
+        assert settings.aws_secret_access_key == "secret123"
+        assert settings.aws_session_token == "token456"
+        assert settings.aws_role_arn == "arn:aws:iam::123456789012:role/test-role"
+
+    def test_resolve_llm_aws_fields_default_none(self):
+        """AWS fields default to None when not in raw config."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_llm_gateway_settings(
+            {"gateway_url": "https://gw.example.com"},
+        )
+        assert settings.aws_region is None
+        assert settings.aws_profile is None
+        assert settings.aws_access_key_id is None
+        assert settings.aws_secret_access_key is None
+        assert settings.aws_session_token is None
+        assert settings.aws_role_arn is None
+
+    def test_resolve_llm_gcp_fields_passthrough(self):
+        """All four GCP fields are passed through from raw config."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_llm_gateway_settings(
+            {
+                "gateway_url": "https://gw.example.com",
+                "auth_mode": "google_adc",
+                "gcp_project": "my-project",
+                "gcp_location": "us-central1",
+                "gcp_service_account_key_file": "/path/to/key.json",
+                "gcp_target_service_account": "sa@project.iam.gserviceaccount.com",
+            },
+            provider="vertexai",
+        )
+        assert settings.gcp_project == "my-project"
+        assert settings.gcp_location == "us-central1"
+        assert settings.gcp_service_account_key_file == "/path/to/key.json"
+        assert settings.gcp_target_service_account == "sa@project.iam.gserviceaccount.com"
+
+    def test_resolve_llm_gcp_fields_default_none(self):
+        """GCP fields default to None when not in raw config."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_llm_gateway_settings(
+            {"gateway_url": "https://gw.example.com"},
+        )
+        assert settings.gcp_project is None
+        assert settings.gcp_location is None
+        assert settings.gcp_service_account_key_file is None
+        assert settings.gcp_target_service_account is None
+
     def test_resolve_mcp_with_defaults(self):
         _state.set_state(
             initialized=True,
@@ -322,6 +388,69 @@ class TestResolveGatewaySettings:
         assert settings.fail_open is False
         assert settings.timeout == 20
 
+    def test_resolve_mcp_auth_mode_none_by_default(self):
+        """auth_mode defaults to 'none' when no api_key and no explicit auth_mode."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_mcp_gateway_settings(
+            {"gateway_url": "https://mcp-gw.example.com"},
+        )
+        assert settings.auth_mode == "none"
+
+    def test_resolve_mcp_auth_mode_inferred_from_api_key(self):
+        """auth_mode inferred as 'api_key' when gateway_api_key is present but no auth_mode."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_mcp_gateway_settings(
+            {
+                "gateway_url": "https://mcp-gw.example.com",
+                "gateway_api_key": "some-key",
+            },
+        )
+        assert settings.auth_mode == "api_key"
+        assert settings.api_key == "some-key"
+
+    def test_resolve_mcp_auth_mode_explicit_overrides_inference(self):
+        """Explicit auth_mode takes precedence over api_key inference."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_mcp_gateway_settings(
+            {
+                "gateway_url": "https://mcp-gw.example.com",
+                "gateway_api_key": "some-key",
+                "auth_mode": "none",
+            },
+        )
+        assert settings.auth_mode == "none"
+        assert settings.api_key == "some-key"
+
+    def test_resolve_mcp_with_oauth2_config(self):
+        """OAuth2 fields are extracted correctly from raw config."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_mcp_gateway_settings(
+            {
+                "gateway_url": "https://mcp-gw.example.com",
+                "auth_mode": "oauth2_client_credentials",
+                "oauth2_token_url": "https://auth.example.com/oauth/token",
+                "oauth2_client_id": "my-client-id",
+                "oauth2_client_secret": "my-client-secret",
+                "oauth2_scopes": "read write",
+            },
+        )
+        assert settings.auth_mode == "oauth2_client_credentials"
+        assert settings.oauth2_token_url == "https://auth.example.com/oauth/token"
+        assert settings.oauth2_client_id == "my-client-id"
+        assert settings.oauth2_client_secret == "my-client-secret"
+        assert settings.oauth2_scopes == "read write"
+
+    def test_resolve_mcp_oauth2_fields_default_none(self):
+        """OAuth2 fields default to None when not provided."""
+        _state.set_state(initialized=True)
+        settings = _state.resolve_mcp_gateway_settings(
+            {"gateway_url": "https://mcp-gw.example.com"},
+        )
+        assert settings.oauth2_token_url is None
+        assert settings.oauth2_client_id is None
+        assert settings.oauth2_client_secret is None
+        assert settings.oauth2_scopes is None
+
 
 class TestReset:
     """Tests for reset() clearing all new state."""
@@ -332,7 +461,7 @@ class TestReset:
             llm_integration_mode="gateway",
             gateway_mode={
                 "llm_gateways": {
-                    "openai-default": {"gateway_url": "https://gw", "provider": "openai", "default": True},
+                    "openai-1": {"gateway_url": "https://gw", "provider": "openai", "default": True},
                     "math": {"gateway_url": "https://math"},
                 },
                 "mcp_gateways": {"https://mcp.example.com": {"gateway_url": "https://gw/mcp"}},

@@ -79,8 +79,12 @@ az account set --subscription "$AZURE_SUBSCRIPTION_ID"
 
 # Copy agentsec source to the build context (it's not on PyPI)
 # Remove copy on exit (success or failure) so it doesn't shadow repo aidefense for MCP tests
-cleanup_aidefense_copy() { rm -rf "$ROOT_DIR/aidefense" 2>/dev/null || true; }
-trap cleanup_aidefense_copy EXIT
+cleanup_on_exit() {
+    rm -rf "$ROOT_DIR/aidefense" 2>/dev/null || true
+    # Remove generated YAML files that may contain credentials
+    rm -f "$DEPLOY_DIR/deployment.yaml" "$DEPLOY_DIR/endpoint.yaml" 2>/dev/null || true
+}
+trap cleanup_on_exit EXIT
 
 echo "Copying aidefense SDK source to build context..."
 # Path: agentsec/ -> examples/ -> repo-root/aidefense/

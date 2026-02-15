@@ -23,7 +23,10 @@ In MCP Gateway mode:
 - MCP connections are redirected to the gateway URL at the transport level
 - The MCP client library connects to the gateway using MCP protocol (not HTTP POST)
 - Gateway acts as an MCP server that proxies to the actual MCP server after inspection
-- Uses `api-key` header for authentication
+- Supports multiple auth modes per MCP server:
+  - ``none``: No authentication headers
+  - ``api_key``: Uses ``api-key`` header
+  - ``oauth2_client_credentials``: Uses ``Authorization: Bearer <token>`` header
 
 The inspector methods (inspect_request, inspect_response) are pass-through
 since the gateway handles all inspection internally.
@@ -51,6 +54,7 @@ class MCPGatewayInspector:
     Attributes:
         gateway_url: Full gateway MCP URL for transport redirection
         api_key: Optional API key for gateway authentication
+        auth_mode: Authentication mode ("none", "api_key", "oauth2_client_credentials")
         fail_open: Whether to allow connections when gateway is unavailable
     """
     
@@ -58,6 +62,7 @@ class MCPGatewayInspector:
         self,
         gateway_url: Optional[str] = None,
         api_key: Optional[str] = None,
+        auth_mode: str = "none",
         fail_open: bool = True,
     ):
         """
@@ -65,15 +70,18 @@ class MCPGatewayInspector:
         
         Args:
             gateway_url: Full gateway URL for MCP connections
-            api_key: Optional API key for gateway authentication (used in `api-key` header)
+            api_key: Optional API key for gateway authentication (used in ``api-key`` header)
+            auth_mode: Authentication mode - ``"none"``, ``"api_key"``, or
+                ``"oauth2_client_credentials"``
             fail_open: Whether to allow connections when gateway fails (default True)
         """
         self.gateway_url = gateway_url
         self.api_key = api_key
+        self.auth_mode = auth_mode
         self.fail_open = fail_open
         
         if gateway_url:
-            logger.debug(f"MCPGatewayInspector initialized with URL: {gateway_url}")
+            logger.debug(f"MCPGatewayInspector initialized with URL: {gateway_url} (auth_mode={auth_mode})")
         else:
             logger.debug("MCPGatewayInspector initialized without gateway URL")
     
@@ -95,10 +103,18 @@ class MCPGatewayInspector:
         """
         Get headers to add to MCP transport connections.
         
+        This method only handles static header injection.  For
+        ``"oauth2_client_credentials"`` auth, token fetching and
+        ``Authorization: Bearer`` header injection is performed by
+        the MCP patcher (``patchers/mcp.py``) at connection time,
+        not by this inspector.
+        
         Returns:
-            Headers dict with api-key if configured, empty dict otherwise
+            Headers dict based on auth_mode:
+            - ``"api_key"``: ``{"api-key": "<key>"}``
+            - ``"none"``, ``"oauth2_client_credentials"``, or other: empty dict
         """
-        if self.api_key:
+        if self.auth_mode == "api_key" and self.api_key:
             return {"api-key": self.api_key}
         return {}
     
@@ -170,4 +186,8 @@ class MCPGatewayInspector:
         return self.inspect_response(tool_name, arguments, result, metadata)
     
     def __repr__(self) -> str:
-        return f"MCPGatewayInspector(gateway_url={self.gateway_url!r}, api_key={'*****' if self.api_key else None})"
+        return (
+            f"MCPGatewayInspector(gateway_url={self.gateway_url!r}, "
+            f"auth_mode={self.auth_mode!r}, "
+            f"api_key={'*****' if self.api_key else None})"
+        )

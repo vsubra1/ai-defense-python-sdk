@@ -26,13 +26,12 @@ if env_file.exists():
 
 # Enable protection before importing clients
 from aidefense.runtime import agentsec
+config_path = str(Path(__file__).parent.parent / "agentsec.yaml")
 agentsec.protect(
+    config=config_path,  # gateway URLs, API endpoints, timeouts
     llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
     mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
-    api_mode={"llm": {"mode": "enforce"}},
 )
-# Alternative: use a YAML config file (recommended for production):
-#   agentsec.protect(config="agentsec.yaml")
 
 
 def main() -> None:

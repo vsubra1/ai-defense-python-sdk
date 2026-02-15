@@ -213,9 +213,10 @@ def _handle_gateway_call_sync(
     gateway_api_key = gw_settings.api_key
     if not gateway_url or not gateway_api_key:
         logger.warning("Gateway mode enabled but Cohere gateway not configured")
-        set_inspection_context(decision=Decision.allow(reasons=["Cohere gateway not configured"]), done=True)
+        block_decision = Decision.block(reasons=["Cohere gateway not configured"])
+        set_inspection_context(decision=block_decision, done=True)
         raise SecurityPolicyError(
-            Decision.block(reasons=["Cohere gateway not configured"]),
+            block_decision,
             "Gateway mode enabled but Cohere gateway not configured (check gateway_mode.llm_gateways for a cohere provider entry in config)",
         )
     messages = kwargs.get("messages", [])
@@ -248,10 +249,9 @@ def _handle_gateway_call_sync(
         if gw_settings.fail_open:
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
             raise
-        raise SecurityPolicyError(
-            Decision.block(reasons=["Gateway unavailable"]),
-            f"Gateway HTTP error: {e}",
-        )
+        block_decision = Decision.block(reasons=["Gateway unavailable"])
+        set_inspection_context(decision=block_decision, done=True)
+        raise SecurityPolicyError(block_decision, f"Gateway HTTP error: {e}")
     except SecurityPolicyError:
         raise
     except Exception as e:
@@ -259,7 +259,9 @@ def _handle_gateway_call_sync(
         if gw_settings.fail_open:
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
             raise
-        raise
+        block_decision = Decision.block(reasons=[f"Gateway error: {e}"])
+        set_inspection_context(decision=block_decision, done=True)
+        raise SecurityPolicyError(block_decision, f"Gateway error: {e}")
 
 
 async def _handle_gateway_call_async(
@@ -274,8 +276,10 @@ async def _handle_gateway_call_async(
     gateway_api_key = gw_settings.api_key
     if not gateway_url or not gateway_api_key:
         logger.warning("Gateway mode enabled but Cohere gateway not configured")
+        block_decision = Decision.block(reasons=["Cohere gateway not configured"])
+        set_inspection_context(decision=block_decision, done=True)
         raise SecurityPolicyError(
-            Decision.block(reasons=["Cohere gateway not configured"]),
+            block_decision,
             "Gateway mode enabled but Cohere gateway not configured (check gateway_mode.llm_gateways for a cohere provider entry in config)",
         )
     messages = kwargs.get("messages", [])
@@ -308,10 +312,9 @@ async def _handle_gateway_call_async(
         if gw_settings.fail_open:
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
             raise
-        raise SecurityPolicyError(
-            Decision.block(reasons=["Gateway unavailable"]),
-            f"Gateway HTTP error: {e}",
-        )
+        block_decision = Decision.block(reasons=["Gateway unavailable"])
+        set_inspection_context(decision=block_decision, done=True)
+        raise SecurityPolicyError(block_decision, f"Gateway HTTP error: {e}")
     except SecurityPolicyError:
         raise
     except Exception as e:
@@ -319,7 +322,9 @@ async def _handle_gateway_call_async(
         if gw_settings.fail_open:
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
             raise
-        raise
+        block_decision = Decision.block(reasons=[f"Gateway error: {e}"])
+        set_inspection_context(decision=block_decision, done=True)
+        raise SecurityPolicyError(block_decision, f"Gateway error: {e}")
 
 
 class _CohereStreamingInspectionWrapper:
@@ -475,6 +480,7 @@ class _CohereAsyncFakeStreamWrapper:
 
 def _wrap_chat(wrapped, instance, args, kwargs):
     """Sync wrapper for V2Client.chat. Supports API and gateway integration modes."""
+    set_inspection_context(done=False)
     if not _should_inspect():
         return wrapped(*args, **kwargs)
     model = kwargs.get("model", "unknown")
@@ -519,6 +525,7 @@ def _wrap_chat(wrapped, instance, args, kwargs):
 
 def _wrap_chat_stream(wrapped, instance, args, kwargs):
     """Sync wrapper for V2Client.chat_stream. In gateway mode returns a fake stream of one chunk."""
+    set_inspection_context(done=False)
     if not _should_inspect():
         return wrapped(*args, **kwargs)
     model = kwargs.get("model", "unknown")
@@ -551,6 +558,7 @@ def _wrap_chat_stream(wrapped, instance, args, kwargs):
 
 async def _wrap_chat_async(wrapped, instance, args, kwargs):
     """Async wrapper for AsyncV2Client.chat. Supports API and gateway integration modes."""
+    set_inspection_context(done=False)
     if not _should_inspect():
         return await wrapped(*args, **kwargs)
     model = kwargs.get("model", "unknown")
@@ -595,6 +603,7 @@ async def _wrap_chat_async(wrapped, instance, args, kwargs):
 
 async def _wrap_chat_stream_async(wrapped, instance, args, kwargs):
     """Async wrapper for AsyncV2Client.chat_stream. In gateway mode returns a fake stream of one chunk."""
+    set_inspection_context(done=False)
     if not _should_inspect():
         return await wrapped(*args, **kwargs)
     model = kwargs.get("model", "unknown")

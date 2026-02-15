@@ -43,7 +43,7 @@ MCP_TIMEOUT = int(os.getenv("MCP_TIMEOUT", "60"))
 
 # Load shared .env file (before agentsec.protect())
 from dotenv import load_dotenv
-shared_env = Path(__file__).parent.parent / "_shared" / ".env"
+shared_env = Path(__file__).parent.parent.parent / ".env"
 if shared_env.exists():
     load_dotenv(shared_env)
 
@@ -53,11 +53,12 @@ if shared_env.exists():
 from aidefense.runtime import agentsec
 config_path = str(Path(__file__).parent.parent.parent / "agentsec.yaml")
 # Allow integration test script to override YAML integration mode via env vars
-agentsec.protect(
-    config=config_path,
-    llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE"),
-    mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE"),
-)
+_protect_kwargs = {}
+if os.getenv("AGENTSEC_LLM_INTEGRATION_MODE"):
+    _protect_kwargs["llm_integration_mode"] = os.getenv("AGENTSEC_LLM_INTEGRATION_MODE")
+if os.getenv("AGENTSEC_MCP_INTEGRATION_MODE"):
+    _protect_kwargs["mcp_integration_mode"] = os.getenv("AGENTSEC_MCP_INTEGRATION_MODE")
+agentsec.protect(config=config_path, **_protect_kwargs)
 
 # That's it! Now import your frameworks normally
 #

@@ -69,15 +69,15 @@ Each deployment mode supports two integration modes for Cisco AI Defense:
    gcloud services enable container.googleapis.com
    ```
 
-3. **AI Defense Configuration** (in `examples/.env`)
-   ```bash
-   # API Mode configuration
-   AI_DEFENSE_API_MODE_LLM_ENDPOINT=https://your-ai-defense-endpoint
-   AI_DEFENSE_API_MODE_LLM_API_KEY=your-api-key
+3. **AI Defense Configuration**
 
-   # Gateway Mode configuration (optional)
-   AGENTSEC_VERTEXAI_GATEWAY_URL=https://your-gateway-url
-   AGENTSEC_VERTEXAI_GATEWAY_API_KEY=your-gateway-key
+   All agentsec settings (gateway URLs, API mode, etc.) are in `examples/agentsec/agentsec.yaml`.
+   Secrets referenced via `${VAR_NAME}` are resolved from `examples/agentsec/.env`:
+
+   ```bash
+   # Secrets in examples/agentsec/.env
+   AI_DEFENSE_API_MODE_LLM_API_KEY=your-api-key
+   AI_DEFENSE_API_MODE_MCP_API_KEY=your-mcp-api-key
 
    # MCP Server for fetch_url tool (optional)
    MCP_SERVER_URL=https://mcp.deepwiki.com/mcp
@@ -182,36 +182,25 @@ gcp-vertex-ai-agent-engine/
 
 ## How agentsec Protection Works
 
-The `_shared/agent_factory.py` module calls `agentsec.protect()` **before** importing any AI library:
+The `_shared/agent_factory.py` module calls `agentsec.protect()` **before** importing any AI library. All configuration is loaded from `agentsec.yaml`:
 
 ```python
 # Configure AI Defense protection BEFORE importing AI libraries
 from aidefense.runtime import agentsec
 
 agentsec.protect(
-    llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
-    mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
-    api_mode={
-        "llm": {"mode": os.getenv("AGENTSEC_API_MODE_LLM", "monitor")},
-        "mcp": {"mode": os.getenv("AGENTSEC_API_MODE_MCP", "monitor")},
-        "llm_defaults": {"fail_open": True},
-    },
-    gateway_mode={
-        "llm_gateways": {
-            "vertexai-default": {
-                "gateway_url": os.getenv("AGENTSEC_VERTEXAI_GATEWAY_URL"),
-                "auth_mode": "google_adc",
-                "provider": "vertexai",
-                "default": True,
-            },
-        },
-    },
+    config=str(_yaml_config),  # path to agentsec.yaml
+    auto_dotenv=False,         # .env already loaded manually
 )
 
 # NOW import LangChain (will use patched Vertex AI)
 from langchain_google_vertexai import ChatVertexAI
 from langchain_core.tools import tool
 ```
+
+All gateway URLs, API mode settings, retry policies, and fail-open defaults are defined in `agentsec.yaml`. Secrets are referenced via `${VAR_NAME}` and resolved from `.env`.
+
+> **Per-Gateway GCP Credentials**: When using `auth_mode: google_adc`, each Vertex AI gateway in `agentsec.yaml` can specify its own `gcp_project`, `gcp_location`, `gcp_service_account_key_file`, or `gcp_target_service_account` (for SA impersonation). All are optional -- when omitted, `google.auth.default()` ADC is used. See the main agentsec [README](../../README.md) for details.
 
 The agent uses modern LangChain patterns:
 
@@ -272,10 +261,10 @@ poetry run pytest tests/unit/ -v
 | `GOOGLE_CLOUD_LOCATION` | GCP region | `us-central1` |
 | `VERTEX_AI_MODEL` | Model to use | `gemini-2.0-flash-001` |
 | `MCP_SERVER_URL` | MCP server for fetch_url tool | Optional |
-| `AGENTSEC_LLM_INTEGRATION_MODE` | `api` or `gateway` | `api` |
-| `AGENTSEC_MCP_INTEGRATION_MODE` | `api` or `gateway` | `api` |
-| `AGENTSEC_API_MODE_LLM` | API mode behavior | `monitor` |
-| `AGENTSEC_API_MODE_MCP` | API mode behavior | `monitor` |
+| `AI_DEFENSE_API_MODE_LLM_API_KEY` | AI Defense API key (referenced by agentsec.yaml) | Required (API mode) |
+| `AI_DEFENSE_API_MODE_MCP_API_KEY` | AI Defense MCP API key (referenced by agentsec.yaml) | Required (API mode) |
+
+All other agentsec settings (integration modes, gateway URLs, fail-open, retry, etc.) are configured in `agentsec.yaml`.
 
 ### Deployment-Specific Variables
 

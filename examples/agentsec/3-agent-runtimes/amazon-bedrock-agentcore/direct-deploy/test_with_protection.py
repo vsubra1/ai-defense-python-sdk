@@ -32,33 +32,25 @@ if _shared_env.exists():
     load_dotenv(_shared_env)
 
 # =============================================================================
-# Configure agentsec protection (BEFORE importing boto3)
+# Configure agentsec via agentsec.yaml (BEFORE importing boto3)
 # =============================================================================
 from aidefense.runtime import agentsec
 
+# Resolve agentsec.yaml path
+_yaml_paths = [
+    Path("/app/agentsec.yaml"),  # Container deployment
+    Path(__file__).parent.parent.parent.parent / "agentsec.yaml",  # examples/agentsec/agentsec.yaml
+]
+
+_yaml_config = None
+for _yp in _yaml_paths:
+    if _yp.exists():
+        _yaml_config = str(_yp)
+        break
+
 agentsec.protect(
-    llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
-    api_mode={
-        "llm": {
-            "mode": os.getenv("AGENTSEC_API_MODE_LLM", "monitor"),
-            "endpoint": os.getenv("AI_DEFENSE_API_MODE_LLM_ENDPOINT"),
-            "api_key": os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
-        },
-        "llm_defaults": {"fail_open": True},
-    },
-    # Note: AgentCore operations use the Bedrock gateway configuration
-    gateway_mode={
-        "llm_gateways": {
-            "bedrock-default": {
-                "gateway_url": os.getenv("AGENTSEC_BEDROCK_GATEWAY_URL"),
-                "gateway_api_key": os.getenv("AGENTSEC_BEDROCK_GATEWAY_API_KEY"),
-                "auth_mode": "aws_sigv4",
-                "provider": "bedrock",
-                "default": True,
-            },
-        },
-    },
-    auto_dotenv=False,
+    config=_yaml_config,
+    auto_dotenv=False,  # We already loaded .env manually
 )
 
 print(f"[agentsec] Patched: {agentsec.get_patched_clients()}")

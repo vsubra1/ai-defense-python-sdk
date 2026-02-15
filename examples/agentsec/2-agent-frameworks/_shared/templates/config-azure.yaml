@@ -14,7 +14,7 @@ azure:
   deployment_name: ${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4o}
 
   # API version - check Azure docs for latest
-  api_version: "2024-02-15-preview"
+  api_version: "2024-08-01-preview"
 
   auth:
     # Authentication method (choose one):

@@ -1139,16 +1139,6 @@ else
     echo -e "  ${YELLOW}${BOLD}⚠ DEPLOY MODE: Will deploy to Azure and test real endpoints${NC}"
 fi
 
-echo ""
-echo "  Project:          $PROJECT_DIR"
-echo "  Deploy modes:     ${DEPLOY_MODES_TO_TEST[*]}"
-echo "  Integration modes: ${INTEGRATION_MODES_TO_TEST[*]}"
-echo "  MCP Server:       ${MCP_SERVER_URL:-not configured}"
-echo "  Verbose:          $VERBOSE"
-echo "  Local only:       $LOCAL_ONLY"
-echo "  Force deploy:     $FORCE_DEPLOY"
-echo "  Recreate deploy:  $RECREATE_DEPLOY"
-
 # Check poetry is available
 if ! command -v poetry &> /dev/null; then
     echo ""
@@ -1184,8 +1174,22 @@ if [ -z "${AGENT_ENDPOINT_NAME:-}" ] || [ -z "${CONTAINER_ENDPOINT_NAME:-}" ] ||
     fi
 fi
 
+# Set default MCP_SERVER_URL if not set (loaded from .env or fallback)
+export MCP_SERVER_URL="${MCP_SERVER_URL:-https://mcp.deepwiki.com/mcp}"
+
 # Remove stale aidefense copy if present (container deploy copies it for Docker build; it shadows repo aidefense in MCP tests)
 rm -rf "$PROJECT_DIR/aidefense" 2>/dev/null || true
+
+# Display configuration (AFTER .env is loaded so values are correct)
+echo ""
+echo "  Project:          $PROJECT_DIR"
+echo "  Deploy modes:     ${DEPLOY_MODES_TO_TEST[*]}"
+echo "  Integration modes: ${INTEGRATION_MODES_TO_TEST[*]}"
+echo "  MCP Server:       ${MCP_SERVER_URL:-not configured}"
+echo "  Verbose:          $VERBOSE"
+echo "  Local only:       $LOCAL_ONLY"
+echo "  Force deploy:     $FORCE_DEPLOY"
+echo "  Recreate deploy:  $RECREATE_DEPLOY"
 
 # Check required credentials
 if [ "$LOCAL_ONLY" = "true" ]; then

@@ -60,7 +60,7 @@ All paths below are relative to `examples/agentsec/`.
 ```bash
 # 1. Configure credentials and settings
 cp .env.example .env
-# Edit .env with your API keys and provider credentials (secrets only)
+# Edit .env with your API keys and provider credentials
 # Edit agentsec.yaml for integration modes, gateway URLs, and inspection settings
 
 # 2. Run a simple example
@@ -70,7 +70,7 @@ cd 1-simple && poetry install && poetry run python basic_protection.py
 cd 2-agent-frameworks/strands-agent && poetry install && ./scripts/run.sh --openai
 
 # 4. Run all tests (from the repo root: ai-defense-python-sdk/)
-./scripts/run-unit-tests.sh           # ~1130 unit tests
+./scripts/run-unit-tests.sh           # ~1210 unit tests
 ./scripts/run-integration-tests.sh    # Full integration tests
 ```
 
@@ -83,9 +83,9 @@ Configuration is split between two files:
 | File | Contains | Example |
 |------|----------|---------|
 | **`agentsec.yaml`** | Integration modes, gateway URLs, timeouts, inspection modes | `llm_integration_mode: gateway` |
-| **`.env`** | Secrets only (API keys, credentials) | `OPENAI_API_KEY=sk-...` |
+| **`.env`** | Secrets and provider credentials | `OPENAI_API_KEY=sk-...` |
 
-> **Tip**: `agentsec.yaml` can reference secrets from `.env` using `${VAR_NAME}` syntax.
+> **Tip**: `agentsec.yaml` references secrets from `.env` using `${VAR_NAME}` syntax (e.g., `gateway_api_key: ${OPENAI_API_KEY}`). Gateway mode uses the same provider API keys as API mode — no separate gateway-specific keys are needed.
 
 ### Core `.env` Variables
 
@@ -101,20 +101,20 @@ Configuration is split between two files:
 | Mode | Secrets in `.env` | Settings in `agentsec.yaml` |
 |------|-------------------|----------------------------|
 | **API Mode** | `AI_DEFENSE_API_MODE_LLM_API_KEY` | `api_mode.llm.endpoint`, `api_mode.llm.mode` |
-| **Gateway Mode** | Provider-specific gateway API keys (see below) | `gateway_mode.llm_gateways.*` (URLs, providers) |
+| **Gateway Mode** | Provider API keys (same as API mode) | `gateway_mode.llm_gateways.*` (URLs, providers, key refs via `${VAR}`) |
 
 ### By LLM Provider
 
 | Provider | API Mode (`.env`) | Gateway Mode (`.env`) |
 |----------|-------------------|----------------------|
-| **OpenAI** | `OPENAI_API_KEY` | `OPENAI_API_KEY` (same key for both) |
-| **Azure OpenAI** | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT_NAME` | `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` |
+| **OpenAI** | `OPENAI_API_KEY` | `OPENAI_API_KEY` (same key) |
+| **Azure OpenAI** | `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_VERSION` | `AZURE_OPENAI_API_KEY` (same key) |
 | **AWS Bedrock** | `AWS_REGION`, `AWS_PROFILE` (or access keys) | AWS Sig V4 (no API key needed) |
 | **GCP Vertex AI** | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` + ADC | ADC OAuth2 (no API key needed) |
-| **Cohere** | `COHERE_API_KEY` | `AGENTSEC_COHERE_GATEWAY_API_KEY` |
-| **Mistral AI** | `MISTRAL_API_KEY` | `AGENTSEC_MISTRAL_GATEWAY_API_KEY` |
+| **Cohere** | `COHERE_API_KEY` | `COHERE_API_KEY` (same key) |
+| **Mistral AI** | `MISTRAL_API_KEY` | `MISTRAL_API_KEY` (same key) |
 
-> All gateway URLs are configured in `agentsec.yaml` (not `.env`). MCP server URLs are configured per-example or in test scripts.
+> All gateway URLs are configured in `agentsec.yaml` (not `.env`). Gateway mode uses the same provider API key as API mode -- the YAML references them via `${VAR_NAME}` syntax.
 
 ### By Example Path
 
@@ -123,21 +123,22 @@ Configuration is split between two files:
 | `1-simple/basic_protection.py` | API or Gateway | OpenAI | - |
 | `1-simple/openai_example.py` | API or Gateway | OpenAI | - |
 | `1-simple/streaming_example.py` | API or Gateway | OpenAI | - |
-| `1-simple/gateway_mode_example.py` | Gateway | OpenAI | Gateway API key |
+| `1-simple/gateway_mode_example.py` | Gateway | OpenAI | Programmatic config demo |
 | `1-simple/skip_inspection_example.py` | API or Gateway | OpenAI | - |
 | `1-simple/cohere_example.py` | API or Gateway | Cohere | - |
 | `1-simple/mistral_example.py` | API or Gateway | Mistral AI | - |
 | `1-simple/simple_strands_bedrock.py` | API or Gateway | Bedrock | - |
 | `1-simple/mcp_example.py` | API or Gateway | OpenAI + MCP | MCP server URL |
+| `1-simple/multi_gateway_example.py` | API or Gateway | Bedrock (x2) + MCP (x2) | Named gateways, multi-MCP |
 | `2-agent-frameworks/*/--openai` | API or Gateway | OpenAI | - |
 | `2-agent-frameworks/*/--azure` | API or Gateway | Azure OpenAI | - |
 | `2-agent-frameworks/*/--bedrock` | API or Gateway | Bedrock | - |
 | `2-agent-frameworks/*/--vertex` | API or Gateway | Vertex AI | - |
-| `3-agent-runtimes/microsoft-foundry/` | API or Gateway | Azure OpenAI | `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, etc. |
+| `3-agent-runtimes/microsoft-foundry/` | API or Gateway | Azure OpenAI | Azure Foundry deployment vars |
 | `3-agent-runtimes/amazon-bedrock-agentcore/` | API or Gateway | Bedrock | AWS deployment vars |
-| `3-agent-runtimes/gcp-vertex-ai-agent-engine/` | API or Gateway | Vertex AI | `GKE_AUTHORIZED_NETWORKS` |
+| `3-agent-runtimes/gcp-vertex-ai-agent-engine/` | API or Gateway | Vertex AI | GCP deployment vars |
 
-> **Tip**: Check the section headers in `.env.example` - each section shows which examples require those variables.
+> **Tip**: Most `1-simple/` examples use programmatic configuration (inline). `multi_gateway_example.py` uses `agentsec.yaml` to demonstrate named gateways. `3-agent-runtimes/` examples use `agentsec.yaml` for production-like deployments. Check `.env.example` section headers to see which variables each example needs.
 
 ---
 
@@ -145,7 +146,7 @@ Configuration is split between two files:
 
 | Category | Description | Examples |
 |----------|-------------|----------|
-| **1-simple/** | Standalone examples for core features | 9 examples |
+| **1-simple/** | Standalone examples for core features | 10 examples |
 | **2-agent-frameworks/** | Agent frameworks with MCP tools | 6 frameworks |
 | **3-agent-runtimes/** | Cloud deployment with AI Defense | 3 runtimes, 9 modes |
 
@@ -228,26 +229,26 @@ These prerequisites apply to both **Agent Frameworks** and **Agent Runtimes**.
 |-----------|:--------:|------------------|---------------------------|
 | **Cisco AI Defense API** | Yes | `AI_DEFENSE_API_MODE_LLM_API_KEY` | `api_mode.llm.endpoint`, `api_mode.llm.mode` |
 | **OpenAI** | If using | `OPENAI_API_KEY` | - |
-| **Azure OpenAI** | If using | `AZURE_OPENAI_API_KEY` | - |
+| **Azure OpenAI** | If using | `AZURE_OPENAI_API_KEY` | Also needs `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, `AZURE_OPENAI_API_VERSION` |
 | **AWS Bedrock** | If using | AWS credentials (profile or env vars) | - |
 | **Vertex AI** | If using | GCP ADC (`gcloud auth application-default login`) | - |
 | **Cohere** | If using | `COHERE_API_KEY` | - |
 | **Mistral AI** | If using | `MISTRAL_API_KEY` | - |
 
-> Azure OpenAI also requires `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_VERSION` in `.env`.
+> Azure OpenAI also requires `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT_NAME`, and `AZURE_OPENAI_API_VERSION` in `.env`. These are non-secret provider settings, but are kept in `.env` because the Azure OpenAI SDK reads them as environment variables.
 
 #### Gateway Mode Prerequisites
 
-Gateway URLs are configured in `agentsec.yaml` under `gateway_mode.llm_gateways`. Only secrets (API keys) go in `.env`.
+Gateway URLs are configured in `agentsec.yaml` under `gateway_mode.llm_gateways`. The YAML references provider API keys from `.env` via `${VAR_NAME}` syntax -- the same key is used for both API mode and gateway mode.
 
 | Provider | Gateway URL | API Key (`.env`) |
 |----------|-------------|------------------|
 | **OpenAI** | `agentsec.yaml` | `OPENAI_API_KEY` |
-| **Azure OpenAI** | `agentsec.yaml` | `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` |
-| **AWS Bedrock** | `agentsec.yaml` | AWS Sig V4 (no API key) |
-| **Vertex AI** | `agentsec.yaml` | ADC OAuth2 (no API key) |
-| **Cohere** | `agentsec.yaml` | `AGENTSEC_COHERE_GATEWAY_API_KEY` |
-| **Mistral AI** | `agentsec.yaml` | `AGENTSEC_MISTRAL_GATEWAY_API_KEY` |
+| **Azure OpenAI** | `agentsec.yaml` | `AZURE_OPENAI_API_KEY` |
+| **AWS Bedrock** | `agentsec.yaml` | AWS Sig V4 (no API key); per-gateway `aws_region`/`aws_profile`/keys optional |
+| **Vertex AI** | `agentsec.yaml` | ADC OAuth2 (no API key); per-gateway `gcp_project`/`gcp_location`/keys optional |
+| **Cohere** | `agentsec.yaml` | `COHERE_API_KEY` |
+| **Mistral AI** | `agentsec.yaml` | `MISTRAL_API_KEY` |
 
 ---
 
@@ -278,22 +279,208 @@ response = client.chat.completions.create(
 
 ### Gateway Mode Pattern
 
+Gateway mode is best configured via `agentsec.yaml`, which keeps URLs and key references centralized:
+
+```yaml
+# agentsec.yaml
+llm_integration_mode: gateway
+
+gateway_mode:
+  llm_gateways:
+    openai-1:
+      gateway_url: https://gateway.../openai-conn
+      gateway_api_key: ${OPENAI_API_KEY}    # References .env
+      auth_mode: api_key
+      provider: openai
+      default: true
+```
+
 ```python
 from aidefense.runtime import agentsec
-agentsec.protect(
-    llm_integration_mode="gateway",
-    gateway_mode={
-        "llm_gateways": {
-            "openai-default": {
-                "gateway_url": "https://gateway.../openai-conn",
-                "gateway_api_key": "your-key",
-                "provider": "openai",
-                "default": True,
-            },
-        },
-    },
-)
+agentsec.protect(config="agentsec.yaml")
 ```
+
+For quick testing, inline configuration is also supported (see [Programmatic Configuration](#programmatic-configuration)).
+
+### Named Gateway Pattern (Multi-Gateway)
+
+Route the same LLM provider through different gateway connections based on context. Define multiple gateways for the same provider in `agentsec.yaml`, marking one as `default: true`, and use the `gateway()` context manager to select a named gateway at runtime:
+
+```yaml
+# agentsec.yaml
+gateway_mode:
+  llm_gateways:
+    bedrock-1:
+      gateway_url: https://gateway.../bedrock-haiku-conn
+      provider: bedrock
+      auth_mode: aws_sigv4
+      default: true         # Used when no gateway() context is active
+      aws_region: us-east-1
+      aws_profile: default
+
+    bedrock-2:
+      gateway_url: https://gateway.../bedrock-sonnet-conn
+      provider: bedrock
+      auth_mode: aws_sigv4
+      aws_region: eu-west-1
+      aws_profile: team-b
+
+    vertexai-1:
+      gateway_url: https://gateway.../vertexai-us-conn
+      provider: vertexai
+      auth_mode: google_adc
+      default: true
+      gcp_project: my-us-project
+      gcp_location: us-central1
+
+    vertexai-2:
+      gateway_url: https://gateway.../vertexai-eu-conn
+      provider: vertexai
+      auth_mode: google_adc
+      gcp_project: my-eu-project
+      gcp_location: europe-west4
+```
+
+```python
+import boto3
+from aidefense.runtime import agentsec
+
+agentsec.protect(config="agentsec.yaml")
+bedrock = boto3.client("bedrock-runtime", region_name="us-east-1")
+
+# Call 1: Uses bedrock-1 (default) — no context manager needed
+response = bedrock.converse(
+    modelId="anthropic.claude-3-haiku-20240307-v1:0",
+    messages=[{"role": "user", "content": [{"text": "Quick question"}]}],
+)
+
+# Call 2: Uses bedrock-2 (named) — wrap with gateway()
+with agentsec.gateway("bedrock-2"):
+    response = bedrock.converse(
+        modelId="anthropic.claude-3-5-sonnet-20241022-v2:0",
+        messages=[{"role": "user", "content": [{"text": "Complex question"}]}],
+    )
+```
+
+#### Per-Gateway AWS Credentials
+
+When using `auth_mode: aws_sigv4`, each Bedrock gateway can use different
+AWS credentials for SigV4 signing. All fields are optional; when omitted,
+the default boto3 credential chain is used.
+
+**Style 1: Named Profile** (recommended)
+
+```yaml
+    aws_region: us-east-1
+    aws_profile: team-a
+```
+
+**Style 2: Explicit Keys** (use `${VAR}` from `.env` for secrets)
+
+```yaml
+    aws_region: us-east-1
+    aws_access_key_id: ${MY_ACCESS_KEY}
+    aws_secret_access_key: ${MY_SECRET_KEY}
+    aws_session_token: ${MY_SESSION_TOKEN}   # optional
+```
+
+**Style 3: Cross-Account Assume Role**
+
+```yaml
+    aws_region: us-east-1
+    aws_profile: base-account           # credentials to call STS
+    aws_role_arn: arn:aws:iam::123456789012:role/bedrock-role
+```
+
+#### Per-Gateway GCP Credentials
+
+When using `auth_mode: google_adc`, each Vertex AI gateway can use different
+GCP credentials. All fields are optional; when omitted, the default
+`google.auth.default()` ADC chain is used.
+
+**Style 1: Project + Location** (recommended)
+
+```yaml
+    gcp_project: ${VERTEXAI_1_GCP_PROJECT}
+    gcp_location: ${VERTEXAI_1_GCP_LOCATION}
+```
+
+**Style 2: Explicit Service Account Key** (use `${VAR}` from `.env`)
+
+```yaml
+    gcp_service_account_key_file: ${VERTEXAI_1_SA_KEY_FILE}
+```
+
+**Style 3: Service Account Impersonation**
+
+```yaml
+    gcp_project: my-project
+    gcp_location: us-central1
+    gcp_target_service_account: my-sa@project.iam.gserviceaccount.com
+```
+
+Multiple MCP servers are also supported — each server URL is mapped to its gateway in `agentsec.yaml`:
+
+```yaml
+gateway_mode:
+  mcp_gateways:
+    https://remote.mcpservers.org/fetch/mcp:
+      gateway_url: https://gateway.../fetch-mcp-conn
+
+    https://mcp.time.mcpcentral.io:
+      gateway_url: https://gateway.../time-mcp-conn
+```
+
+See `1-simple/multi_gateway_example.py` for a complete working example.
+
+#### MCP Gateway Authentication
+
+Each MCP gateway entry supports a per-server `auth_mode`. Three modes are available:
+
+| `auth_mode` | Header injected | When to use |
+|---|---|---|
+| `none` (default) | _none_ | Gateway does not require authentication |
+| `api_key` | `api-key: <key>` | Gateway requires an API key |
+| `oauth2_client_credentials` | `Authorization: Bearer <token>` | Gateway requires an OAuth 2.0 access token |
+
+**No auth (default):**
+
+```yaml
+gateway_mode:
+  mcp_gateways:
+    https://mcp.example.com:
+      gateway_url: https://gateway.../mcp-conn
+      auth_mode: none          # default — can be omitted
+```
+
+**API Key:**
+
+```yaml
+gateway_mode:
+  mcp_gateways:
+    https://mcp.example.com:
+      gateway_url: https://gateway.../mcp-conn
+      auth_mode: api_key
+      gateway_api_key: ${MCP_GATEWAY_API_KEY}
+```
+
+**OAuth 2.0 Client Credentials:**
+
+The SDK automatically fetches and caches access tokens using the Client Credentials grant.
+
+```yaml
+gateway_mode:
+  mcp_gateways:
+    https://secure-mcp.example.com:
+      gateway_url: https://gateway.../mcp-conn
+      auth_mode: oauth2_client_credentials
+      oauth2_token_url: https://auth.example.com/oauth/token
+      oauth2_client_id: ${MCP_OAUTH_CLIENT_ID}
+      oauth2_client_secret: ${MCP_OAUTH_CLIENT_SECRET}
+      oauth2_scopes: "read write"          # optional
+```
+
+Store secrets in `.env` and reference them with `${VAR}` syntax (see `.env.example`).
 
 ### Skip Inspection Pattern
 
@@ -327,7 +514,7 @@ ai-defense-python-sdk/
 │
 └── examples/agentsec/
     ├── agentsec.yaml               # Configuration (modes, gateways, timeouts)
-    ├── .env.example                # Template - copy to .env (secrets only)
+    ├── .env.example                # Template - copy to .env (secrets + credentials)
     ├── README.md                   # This file
     │
     ├── 1-simple/                   # Standalone examples
@@ -340,6 +527,7 @@ ai-defense-python-sdk/
     │   ├── gateway_mode_example.py # Gateway mode
     │   ├── skip_inspection_example.py  # Per-call exclusion
     │   ├── simple_strands_bedrock.py   # Strands + Bedrock
+    │   ├── multi_gateway_example.py    # Multi-gateway + multi-MCP
     │   └── tests/
     │
     ├── 2-agent-frameworks/         # Agent framework examples
@@ -380,6 +568,7 @@ Standalone examples demonstrating core agentsec features without agent framework
 | `gateway_mode_example.py` | Gateway mode configuration | ✅ | ✅ |
 | `skip_inspection_example.py` | Per-call exclusion with context manager | ✅ | ✅ |
 | `simple_strands_bedrock.py` | Strands agent with Bedrock Claude | ✅ | ✅ |
+| `multi_gateway_example.py` | Multi-gateway (2 Bedrock LLMs) + multi-MCP (2 servers) | ✅ | ✅ |
 
 ### Run Examples
 
@@ -397,6 +586,7 @@ poetry run python mcp_example.py
 poetry run python gateway_mode_example.py
 poetry run python skip_inspection_example.py
 poetry run python simple_strands_bedrock.py
+poetry run python multi_gateway_example.py
 
 # Run integration tests (from repo root)
 cd /path/to/ai-defense-python-sdk
@@ -619,7 +809,7 @@ agentsec uses two configuration files:
 | File | Purpose | Contents |
 |------|---------|----------|
 | **`agentsec.yaml`** | All non-secret settings | Integration modes, gateway URLs, endpoints, timeouts, retry policy, inspection modes |
-| **`.env`** | Secrets only | API keys, credentials (referenced via `${VAR}` in YAML) |
+| **`.env`** | Secrets and provider credentials | API keys, cloud credentials (referenced via `${VAR}` in YAML) |
 
 ### Getting Started
 
@@ -639,17 +829,19 @@ cp .env.example .env
 | `AI_DEFENSE_API_MODE_LLM_API_KEY` | Yes | AI Defense API key for LLM inspection |
 | `AI_DEFENSE_API_MODE_MCP_API_KEY` | For MCP | AI Defense API key for MCP inspection |
 
-#### Gateway API Keys (Required for Gateway integration)
+#### Provider API Keys (Used for both API mode and Gateway mode)
+
+Gateway mode uses the **same provider API key** as API mode — the YAML references them via `${VAR_NAME}`. No separate gateway-specific API keys are needed.
 
 | Variable | When Required | Description |
 |----------|:-------------:|-------------|
-| `OPENAI_API_KEY` | Gateway + OpenAI | OpenAI API key (used for both direct and gateway mode) |
-| `AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY` | Gateway + Azure | Azure OpenAI gateway API key |
-| `AGENTSEC_COHERE_GATEWAY_API_KEY` | Gateway + Cohere | Cohere gateway API key |
-| `AGENTSEC_MISTRAL_GATEWAY_API_KEY` | Gateway + Mistral | Mistral AI gateway API key |
+| `OPENAI_API_KEY` | OpenAI | OpenAI API key (same key for both API and gateway mode) |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI | Azure OpenAI API key (same key for both modes) |
+| `COHERE_API_KEY` | Cohere | Cohere API key (same key for both modes) |
+| `MISTRAL_API_KEY` | Mistral AI | Mistral AI API key (same key for both modes) |
 
 > All gateway URLs are configured in `agentsec.yaml` — only API keys go in `.env`.
-> Bedrock uses AWS Sig V4 auth and Vertex AI uses ADC OAuth2 — neither requires a gateway API key.
+> Bedrock uses AWS Sig V4 auth and Vertex AI uses ADC OAuth2 — neither requires an API key.
 
 ### Settings in `agentsec.yaml`
 
@@ -662,7 +854,7 @@ All non-secret configuration lives in `agentsec.yaml`. Key sections:
 | `api_mode.llm` | API inspection endpoint, mode, API key ref | `mode: enforce` |
 | `api_mode.mcp` | MCP inspection endpoint, mode, API key ref | `mode: monitor` |
 | `gateway_mode.llm_gateways` | Named gateway entries with URLs and providers | See `agentsec.yaml` |
-| `gateway_mode.mcp_gateways` | MCP server → gateway URL mappings | See `agentsec.yaml` |
+| `gateway_mode.mcp_gateways` | MCP server → gateway URL mappings (with per-server `auth_mode`) | See `agentsec.yaml` |
 | `*.defaults` | Timeout, retry, fail_open per mode | `timeout: 5` |
 | `logging` | Log level and format | `level: DEBUG` |
 
@@ -763,21 +955,20 @@ MISTRAL_API_KEY=your-mistral-api-key
 
 ### Programmatic Configuration
 
-Configuration can be provided via `protect()` parameters using structured dicts:
+For quick testing or when YAML is not practical, configuration can be provided inline via `protect()` kwargs. This is what the `1-simple/gateway_mode_example.py` demonstrates.
 
 ```python
 from aidefense.runtime import agentsec
+import os
 
-# Option 1: YAML config file (recommended)
-agentsec.protect(config="agentsec.yaml")
-
-# Option 2: Inline configuration
+# Inline configuration (for quick testing only — prefer agentsec.yaml for production)
 agentsec.protect(
+    llm_integration_mode="gateway",
     api_mode={
         "llm": {
             "mode": "enforce",
             "endpoint": "https://preview.api.inspect.aidefense.aiteam.cisco.com/api",
-            "api_key": "your-api-key",
+            "api_key": os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
         },
         "mcp": {"mode": "monitor"},
         "llm_defaults": {"fail_open": True, "timeout": 5},
@@ -785,25 +976,27 @@ agentsec.protect(
     },
     gateway_mode={
         "llm_gateways": {
-            "openai-default": {
+            "openai-1": {
                 "gateway_url": "https://gateway.../openai-conn",
-                "gateway_api_key": "your-key",
+                "gateway_api_key": os.getenv("OPENAI_API_KEY"),
+                "auth_mode": "api_key",
                 "provider": "openai",
                 "default": True,
             },
         },
         "mcp_gateways": {
-            "https://remote.mcpservers.org/fetch/mcp": {"gateway_url": "https://gateway.../mcp", "gateway_api_key": "your-key"},
+            "https://remote.mcpservers.org/fetch/mcp": {
+                "gateway_url": "https://gateway.../mcp",
+                "auth_mode": "none",  # "none" | "api_key" | "oauth2_client_credentials"
+            },
         },
     },
-    # Connection pool (global)
     pool_max_connections=20,
     pool_max_keepalive=10,
-    # Custom logger
-    custom_logger=my_logger,
-    log_file="/var/log/agentsec.log",
 )
 ```
+
+> **Note**: The `1-simple/` examples use programmatic configuration intentionally — they serve as self-contained demos. The `3-agent-runtimes/` examples use `agentsec.yaml` for production-like deployments.
 
 See `agentsec.yaml` for a complete YAML configuration reference.
 
@@ -897,9 +1090,9 @@ decision.explanation     # Human-readable explanation
 
 | Category | Test Type | Test Count | What It Validates |
 |----------|-----------|:----------:|-------------------|
-| **Core SDK** | Unit | ~670 | Patching, inspection, decisions, config |
-| **Simple Examples** | Unit | ~85 | Example file structure, syntax |
-| **Simple Examples** | Integration | 18 | 9 examples x 2 modes (API + Gateway) |
+| **Core SDK** | Unit | ~750 | Patching, inspection, decisions, config |
+| **Simple Examples** | Unit | ~95 | Example file structure, syntax |
+| **Simple Examples** | Integration | 20 | 10 examples x 2 modes (API + Gateway) |
 | **Agent Frameworks** | Unit | ~210 | Agent setup, provider configs |
 | **Agent Frameworks** | Integration | ~40 | 6 frameworks x (2-4 providers) x 2 modes* |
 | **AgentCore** | Unit | ~65 | Deploy scripts, protection setup |
@@ -909,7 +1102,7 @@ decision.explanation     # Human-readable explanation
 | **Azure AI Foundry** | Unit | ~50 | Deploy scripts, agent factory, endpoints |
 | **Azure AI Foundry** | Integration | 8 | (3 deploy x 2 modes) + 2 MCP tests |
 
-**Total: ~1130 unit tests**
+**Total: ~1210 unit tests**
 
 *Provider support varies by framework: OpenAI Agents supports 2 providers (openai, azure), others support 4 (openai, azure, vertex, bedrock)
 
@@ -921,7 +1114,7 @@ decision.explanation     # Human-readable explanation
 # From project root
 cd /path/to/ai-defense-python-sdk
 
-# All unit tests (~1130 tests)
+# All unit tests (~1210 tests)
 ./scripts/run-unit-tests.sh
 
 # All integration tests

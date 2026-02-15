@@ -37,6 +37,9 @@ from ._google_common import (
 
 logger = logging.getLogger("aidefense.runtime.agentsec.patchers.google_genai")
 
+# Maximum streaming buffer size (1MB) to prevent unbounded memory usage
+MAX_STREAMING_BUFFER_SIZE = 1_000_000
+
 # Global inspector instance with thread-safe initialization
 _inspector: Optional[LLMInspector] = None
 _inspector_lock = threading.Lock()
@@ -142,6 +145,115 @@ def _extract_genai_response(response: Any) -> str:
     return ""
 
 
+def _serialize_part(part: Any) -> Optional[Dict]:
+    """Serialize a google-genai Part object to dict for gateway request.
+
+    Handles text, function_call, and function_response parts.
+    The google-genai SDK uses Pydantic v2 models; we try model_dump first,
+    then fall back to manual attribute extraction.
+
+    Args:
+        part: A Part object (Pydantic model, dict, or proto-plus object)
+
+    Returns:
+        A JSON-compatible dict representing the part, or None if empty
+    """
+    if isinstance(part, dict):
+        return part
+
+    # Try Pydantic serialization first (google-genai SDK uses Pydantic v2)
+    if hasattr(part, "model_dump"):
+        try:
+            dumped = part.model_dump(mode="json", by_alias=True, exclude_none=True)
+            if dumped:
+                return dumped
+        except (TypeError, Exception):
+            try:
+                dumped = part.model_dump(exclude_none=True)
+                if dumped:
+                    return dumped
+            except Exception:
+                pass
+
+    # Manual extraction for each known part type
+    result: Dict[str, Any] = {}
+
+    # Text part
+    if hasattr(part, "text") and part.text is not None and part.text != "":
+        result["text"] = part.text
+
+    # Function call part (model requesting a tool call)
+    if hasattr(part, "function_call") and part.function_call is not None:
+        fc = part.function_call
+        fc_dict: Dict[str, Any] = {}
+        if hasattr(fc, "name") and fc.name:
+            fc_dict["name"] = fc.name
+        if hasattr(fc, "args") and fc.args is not None:
+            args = fc.args
+            # args may be a dict, proto MapComposite, or Pydantic object
+            if isinstance(args, dict):
+                fc_dict["args"] = args
+            elif hasattr(args, "items"):
+                fc_dict["args"] = dict(args)
+            else:
+                fc_dict["args"] = args
+        if fc_dict:
+            result["functionCall"] = fc_dict
+
+    # Function response part (tool execution result)
+    if hasattr(part, "function_response") and part.function_response is not None:
+        fr = part.function_response
+        fr_dict: Dict[str, Any] = {}
+        if hasattr(fr, "name") and fr.name:
+            fr_dict["name"] = fr.name
+        if hasattr(fr, "response") and fr.response is not None:
+            resp = fr.response
+            if isinstance(resp, dict):
+                fr_dict["response"] = resp
+            elif hasattr(resp, "items"):
+                fr_dict["response"] = dict(resp)
+            else:
+                fr_dict["response"] = {"result": str(resp)}
+        if fr_dict:
+            result["functionResponse"] = fr_dict
+
+    return result if result else None
+
+
+def _serialize_sdk_object(obj: Any) -> Any:
+    """Serialize a google-genai SDK object (Tool, ToolConfig, etc.) to a JSON-compatible dict."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return obj
+    if isinstance(obj, (list, tuple)):
+        return [_serialize_sdk_object(item) for item in obj]
+    # Pydantic v2
+    if hasattr(obj, "model_dump"):
+        try:
+            return obj.model_dump(mode="json", by_alias=True, exclude_none=True)
+        except (TypeError, Exception):
+            try:
+                return obj.model_dump(exclude_none=True)
+            except Exception:
+                pass
+    # Pydantic v1
+    if hasattr(obj, "dict"):
+        try:
+            return obj.dict(exclude_none=True)
+        except Exception:
+            pass
+    # Proto-plus
+    if hasattr(type(obj), "to_dict"):
+        try:
+            return type(obj).to_dict(obj)
+        except Exception:
+            pass
+    return obj
+
+
 def _handle_google_genai_gateway_call(
     model_name: str,
     contents: Any,
@@ -165,12 +277,26 @@ def _handle_google_genai_gateway_call(
     """
     import httpx
 
-    if not gw_settings or not gw_settings.url or not gw_settings.api_key:
-        logger.warning("Gateway mode enabled but google-genai gateway not configured")
+    if not gw_settings or not gw_settings.url:
+        logger.warning("Gateway mode enabled but google-genai gateway URL not configured")
         raise SecurityPolicyError(
             Decision.block(reasons=["google-genai gateway not configured"]),
             "Gateway mode enabled but google-genai gateway not configured (check gateway_mode.llm_gateways for a google_genai or vertexai provider entry in config)"
         )
+    
+    # Build auth headers based on auth_mode
+    if gw_settings.auth_mode == "google_adc":
+        from ._google_common import _build_google_auth_header
+        auth_headers = _build_google_auth_header(gw_settings)
+    else:
+        # api_key mode
+        if not gw_settings.api_key:
+            logger.warning("Gateway mode enabled but google-genai gateway api_key not configured")
+            raise SecurityPolicyError(
+                Decision.block(reasons=["google-genai gateway api_key not configured"]),
+                "Gateway mode enabled but google-genai gateway api_key not configured (auth_mode=api_key requires gateway_api_key)"
+            )
+        auth_headers = {"Authorization": f"Bearer {gw_settings.api_key}"}
     
     # Convert contents to dict format for the request
     contents_list = []
@@ -186,13 +312,14 @@ def _handle_google_genai_gateway_call(
                 elif hasattr(item, "role") and hasattr(item, "parts"):
                     parts_list = []
                     for part in item.parts:
-                        if hasattr(part, "text"):
-                            parts_list.append({"text": part.text})
-                    contents_list.append({"role": item.role, "parts": parts_list})
+                        part_dict = _serialize_part(part)
+                        if part_dict:
+                            parts_list.append(part_dict)
+                    if parts_list:
+                        contents_list.append({"role": item.role, "parts": parts_list})
     
-    # Build native request
+    # Build native request body (model is in URL path, not body, for Vertex AI)
     request_body = {
-        "model": model_name,
         "contents": contents_list,
     }
     
@@ -212,17 +339,48 @@ def _handle_google_genai_gateway_call(
                 request_body["systemInstruction"] = {"parts": [{"text": config.system_instruction}]}
         if config_dict:
             request_body["generationConfig"] = config_dict
+
+        # Extract tools (needed for function-calling / tool-use)
+        if hasattr(config, "tools") and config.tools:
+            tools_list = []
+            for tool in config.tools:
+                serialized = _serialize_sdk_object(tool)
+                if serialized:
+                    tools_list.append(serialized)
+            if tools_list:
+                request_body["tools"] = tools_list
+                logger.debug(f"[GATEWAY] Including {len(tools_list)} tool(s) in request")
+
+        # Extract tool_config
+        if hasattr(config, "tool_config") and config.tool_config:
+            serialized_tc = _serialize_sdk_object(config.tool_config)
+            if serialized_tc:
+                request_body["toolConfig"] = serialized_tc
+    
+    # Build the full Vertex AI gateway URL with API path
+    # The Vertex AI gateway expects: {base}/v1/projects/{p}/locations/{l}/publishers/google/models/{m}:generateContent
+    from ._google_common import build_vertexai_gateway_url
+    try:
+        full_gateway_url = build_vertexai_gateway_url(
+            gw_settings.url, model_name, gw_settings, streaming=False,
+        )
+    except ValueError as exc:
+        raise SecurityPolicyError(
+            Decision.block(reasons=[str(exc)]),
+            str(exc),
+        )
     
     logger.debug(f"[GATEWAY] Sending native google-genai request to gateway")
+    logger.debug(f"[GATEWAY] URL: {full_gateway_url}")
     logger.debug(f"[GATEWAY] Model: {model_name}")
     
     try:
         with httpx.Client(timeout=float(gw_settings.timeout)) as client:
             response = client.post(
-                gw_settings.url,
+                full_gateway_url,
                 json=request_body,
                 headers={
-                    "Authorization": f"Bearer {gw_settings.api_key}",
+                    **auth_headers,
                     "Content-Type": "application/json",
                 },
             )
@@ -237,6 +395,12 @@ def _handle_google_genai_gateway_call(
         
     except httpx.HTTPStatusError as e:
         logger.error(f"[GATEWAY] HTTP error: {e}")
+        # Log status code and truncated body for debugging (avoid leaking sensitive data)
+        try:
+            body_preview = e.response.text[:200] if hasattr(e.response, 'text') else ""
+            logger.error(f"[GATEWAY] HTTP {e.response.status_code} — body preview: {body_preview}")
+        except Exception:
+            pass
         if gw_settings.fail_open:
             # fail_open=True: allow request to proceed by re-raising original error
             logger.warning(f"[GATEWAY] fail_open=True, re-raising original HTTP error for caller to handle")
@@ -257,8 +421,59 @@ def _handle_google_genai_gateway_call(
         raise
 
 
+class _PromptFeedbackWrapper:
+    """Wrapper for prompt_feedback in gateway responses.
+
+    Provides the attributes that ``langchain_google_genai`` and other
+    frameworks inspect (``block_reason``, ``safety_ratings``).  When the
+    gateway response does not include explicit feedback the wrapper returns
+    safe defaults so that truthiness checks (``if response.prompt_feedback``)
+    evaluate to ``False``.
+    """
+
+    def __init__(self, data: Optional[Dict] = None):
+        self._data = data or {}
+
+    @property
+    def block_reason(self):
+        return self._data.get("blockReason") or self._data.get("block_reason") or 0
+
+    @property
+    def safety_ratings(self):
+        return self._data.get("safetyRatings") or self._data.get("safety_ratings") or []
+
+    def __bool__(self):
+        # ``langchain_google_genai`` does ``if response.prompt_feedback``
+        return bool(self.block_reason)
+
+
+class _UsageMetadataWrapper:
+    """Wrapper for usageMetadata in gateway responses."""
+
+    def __init__(self, data: Optional[Dict] = None):
+        self._data = data or {}
+
+    @property
+    def prompt_token_count(self):
+        return self._data.get("promptTokenCount") or self._data.get("prompt_token_count") or 0
+
+    @property
+    def candidates_token_count(self):
+        return self._data.get("candidatesTokenCount") or self._data.get("candidates_token_count") or 0
+
+    @property
+    def total_token_count(self):
+        return self._data.get("totalTokenCount") or self._data.get("total_token_count") or 0
+
+
 class _GoogleGenAIResponseWrapper:
-    """Wrapper to provide attribute access to native google-genai response dict."""
+    """Wrapper to provide attribute access to native google-genai response dict.
+
+    Exposes all attributes that framework integrations (LangChain, LangGraph,
+    CrewAI, etc.) access on the ``GenerateContentResponse`` object returned by
+    the Google GenAI SDK, including ``candidates``, ``prompt_feedback``,
+    ``usage_metadata``, and ``text``.
+    """
     
     def __init__(self, response_data: Dict):
         if not isinstance(response_data, dict):
@@ -278,6 +493,32 @@ class _GoogleGenAIResponseWrapper:
                 logger.warning(f"Error parsing candidates from gateway response: {e}")
                 self._candidates = []
         return self._candidates
+
+    @property
+    def prompt_feedback(self):
+        """Return prompt feedback (block reason / safety ratings).
+
+        ``langchain_google_genai`` checks ``if response.prompt_feedback`` to
+        decide whether the prompt was blocked.  Our wrapper returns a falsy
+        object when no blocking occurred so the check passes cleanly.
+        """
+        fb = self._data.get("promptFeedback") or self._data.get("prompt_feedback")
+        return _PromptFeedbackWrapper(fb)
+
+    @property
+    def usage_metadata(self):
+        um = self._data.get("usageMetadata") or self._data.get("usage_metadata")
+        return _UsageMetadataWrapper(um)
+    
+    @property
+    def model_version(self):
+        """Model version string from the response."""
+        return self._data.get("modelVersion") or self._data.get("model_version") or ""
+
+    @property
+    def response_id(self):
+        """Response ID if provided by the gateway."""
+        return self._data.get("responseId") or self._data.get("response_id") or ""
     
     @property
     def text(self):
@@ -306,7 +547,31 @@ class _CandidateWrapper:
     
     @property
     def finish_reason(self):
-        return self._data.get("finishReason")
+        return self._data.get("finishReason") or self._data.get("finish_reason")
+
+    @property
+    def safety_ratings(self):
+        return self._data.get("safetyRatings") or self._data.get("safety_ratings") or []
+
+    @property
+    def index(self):
+        return self._data.get("index", 0)
+
+    @property
+    def citation_metadata(self):
+        return self._data.get("citationMetadata") or self._data.get("citation_metadata") or None
+
+    @property
+    def grounding_metadata(self):
+        return self._data.get("groundingMetadata") or self._data.get("grounding_metadata") or None
+
+    @property
+    def avg_logprobs(self):
+        return self._data.get("avgLogprobs") or self._data.get("avg_logprobs") or None
+
+    @property
+    def token_count(self):
+        return self._data.get("tokenCount") or self._data.get("token_count") or 0
 
 
 class _ContentWrapper:
@@ -328,7 +593,15 @@ class _ContentWrapper:
 
 
 class _PartWrapper:
-    """Wrapper for part in response."""
+    """Wrapper for part in response.
+
+    Handles text parts, functionCall parts (model requesting a tool call),
+    and functionResponse parts (tool execution results).
+
+    Also exposes stub attributes (``inline_data``, ``executable_code``, etc.)
+    that ``langchain_google_genai`` and other integrations probe via truthiness
+    checks.
+    """
     
     def __init__(self, part_data: Dict):
         self._data = part_data
@@ -336,6 +609,83 @@ class _PartWrapper:
     @property
     def text(self):
         return self._data.get("text", "")
+
+    @property
+    def function_call(self):
+        """Return a FunctionCall-like object if this part is a function call."""
+        fc_data = self._data.get("functionCall") or self._data.get("function_call")
+        if fc_data:
+            return _FunctionCallWrapper(fc_data)
+        return None
+
+    @property
+    def function_response(self):
+        """Return a FunctionResponse-like object if this part is a function response."""
+        fr_data = self._data.get("functionResponse") or self._data.get("function_response")
+        if fr_data:
+            return _FunctionResponseWrapper(fr_data)
+        return None
+
+    # --- Stub attributes for framework compatibility ---
+    # ``langchain_google_genai`` checks these with truthiness tests;
+    # returning None / falsy makes those checks pass cleanly.
+
+    @property
+    def inline_data(self):
+        return self._data.get("inlineData") or self._data.get("inline_data") or None
+
+    @property
+    def executable_code(self):
+        return self._data.get("executableCode") or self._data.get("executable_code") or None
+
+    @property
+    def code_execution_result(self):
+        return self._data.get("codeExecutionResult") or self._data.get("code_execution_result") or None
+
+    @property
+    def file_data(self):
+        return self._data.get("fileData") or self._data.get("file_data") or None
+
+    @property
+    def video_metadata(self):
+        return self._data.get("videoMetadata") or self._data.get("video_metadata") or None
+
+    @property
+    def thought(self):
+        return self._data.get("thought") or None
+
+
+class _FunctionCallWrapper:
+    """Wrapper for functionCall in gateway response."""
+
+    def __init__(self, data: Dict):
+        self._data = data
+
+    @property
+    def name(self) -> str:
+        return self._data.get("name", "")
+
+    @property
+    def args(self) -> Dict:
+        return self._data.get("args", {})
+
+    def __repr__(self):
+        return f"FunctionCall(name={self.name!r}, args={self.args!r})"
+
+
+class _FunctionResponseWrapper:
+    """Wrapper for functionResponse in gateway response."""
+
+    def __init__(self, data: Dict):
+        self._data = data
+
+    @property
+    def name(self) -> str:
+        return self._data.get("name", "")
+
+    @property
+    def response(self) -> Dict:
+        return self._data.get("response", {})
 
 
 class GoogleGenAIStreamingWrapper:
@@ -360,10 +710,13 @@ class GoogleGenAIStreamingWrapper:
             chunk = next(self._original)
             self._chunks.append(chunk)
             
-            # Extract text from chunk
+            # Extract text from chunk (with buffer size cap)
             text = _extract_genai_response(chunk)
             if text:
-                self._collected_text.append(text)
+                current_size = sum(len(t) for t in self._collected_text)
+                if current_size < MAX_STREAMING_BUFFER_SIZE:
+                    remaining = MAX_STREAMING_BUFFER_SIZE - current_size
+                    self._collected_text.append(text[:remaining])
             
             return chunk
         except StopIteration:
@@ -377,6 +730,11 @@ class GoogleGenAIStreamingWrapper:
         self._inspection_done = True
         
         full_response = "".join(self._collected_text)
+        if len(full_response) > MAX_STREAMING_BUFFER_SIZE:
+            logger.warning(
+                f"Streaming buffer exceeded {MAX_STREAMING_BUFFER_SIZE} bytes, truncating for inspection"
+            )
+            full_response = full_response[:MAX_STREAMING_BUFFER_SIZE]
         if full_response and self._normalized:
             messages_with_response = self._normalized + [
                 {"role": "assistant", "content": full_response}
@@ -409,10 +767,13 @@ class AsyncGoogleGenAIStreamingWrapper:
             chunk = await self._original.__anext__()
             self._chunks.append(chunk)
             
-            # Extract text from chunk
+            # Extract text from chunk (with buffer size cap)
             text = _extract_genai_response(chunk)
             if text:
-                self._collected_text.append(text)
+                current_size = sum(len(t) for t in self._collected_text)
+                if current_size < MAX_STREAMING_BUFFER_SIZE:
+                    remaining = MAX_STREAMING_BUFFER_SIZE - current_size
+                    self._collected_text.append(text[:remaining])
             
             return chunk
         except StopAsyncIteration:
@@ -426,6 +787,11 @@ class AsyncGoogleGenAIStreamingWrapper:
         self._inspection_done = True
         
         full_response = "".join(self._collected_text)
+        if len(full_response) > MAX_STREAMING_BUFFER_SIZE:
+            logger.warning(
+                f"Streaming buffer exceeded {MAX_STREAMING_BUFFER_SIZE} bytes, truncating for inspection"
+            )
+            full_response = full_response[:MAX_STREAMING_BUFFER_SIZE]
         if full_response and self._normalized:
             messages_with_response = self._normalized + [
                 {"role": "assistant", "content": full_response}
@@ -456,6 +822,7 @@ def _wrap_generate_content(wrapped, instance, args, kwargs):
         model = args[0]
     model_name = _extract_model_name(model)
     
+    set_inspection_context(done=False)
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] google-genai.generate_content - inspection skipped (mode=off or already done)")
         return wrapped(*args, **kwargs)
@@ -475,16 +842,25 @@ def _wrap_generate_content(wrapped, instance, args, kwargs):
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL: {model_name}")
     logger.debug(f"║ Operation: google-genai.generate_content | LLM Mode: {mode} | Integration: {integration_mode}")
     logger.debug(f"╚══════════════════════════════════════════════════════════════")
     
     # Gateway mode: route through AI Defense Gateway
-    gw_settings = resolve_gateway_settings("google_genai")
-    if gw_settings is None:
-        # Fallback: use vertexai gateway for google_genai
+    # Try google_genai gateway first; fall back to vertexai gateway since
+    # google-genai and Vertex AI share the same backend.  If neither is
+    # configured the second call will raise SecurityPolicyError, which is
+    # correct -- we must not silently degrade to API mode.
+    try:
+        gw_settings = resolve_gateway_settings("google_genai")
+    except SecurityPolicyError:
+        logger.warning(
+            "[PATCHED CALL] google-genai.generate_content - No gateway "
+            "configured for 'google_genai', trying 'vertexai' gateway "
+            "as fallback"
+        )
+        # This will raise SecurityPolicyError if vertexai is also missing.
         gw_settings = resolve_gateway_settings("vertexai")
     if gw_settings:
         logger.debug(f"[PATCHED CALL] google-genai.generate_content - Gateway mode - routing to AI Defense Gateway")
@@ -536,6 +912,7 @@ async def _wrap_generate_content_async(wrapped, instance, args, kwargs):
         model = args[0]
     model_name = _extract_model_name(model)
     
+    set_inspection_context(done=False)
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] google-genai.async.generate_content - inspection skipped")
         return await wrapped(*args, **kwargs)
@@ -555,21 +932,25 @@ async def _wrap_generate_content_async(wrapped, instance, args, kwargs):
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL (async): {model_name}")
     logger.debug(f"║ Operation: google-genai.async.generate_content | LLM Mode: {mode} | Integration: {integration_mode}")
     logger.debug(f"╚══════════════════════════════════════════════════════════════")
     
-    # Gateway mode
-    gw_settings = resolve_gateway_settings("google_genai")
-    if gw_settings is None:
-        # Fallback: use vertexai gateway for google_genai
+    # Gateway mode — same google_genai → vertexai fallback as the sync path.
+    try:
+        gw_settings = resolve_gateway_settings("google_genai")
+    except SecurityPolicyError:
+        logger.warning(
+            "[PATCHED CALL] google-genai.async - No gateway configured "
+            "for 'google_genai', trying 'vertexai' gateway as fallback"
+        )
         gw_settings = resolve_gateway_settings("vertexai")
     if gw_settings:
         logger.debug(f"[PATCHED CALL] google-genai.async - Gateway mode - routing to AI Defense Gateway")
-        # For now, use sync gateway call (could be made async)
-        return _handle_google_genai_gateway_call(
+        import asyncio
+        return await asyncio.to_thread(
+            _handle_google_genai_gateway_call,
             model_name=model_name,
             contents=contents,
             config=config,

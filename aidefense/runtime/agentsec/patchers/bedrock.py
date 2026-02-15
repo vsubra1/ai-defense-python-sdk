@@ -46,6 +46,68 @@ from ._base import safe_import, resolve_gateway_settings
 logger = logging.getLogger("aidefense.runtime.agentsec.patchers.bedrock")
 
 
+def _build_aws_session(gw_settings):
+    """Build a boto3 session from per-gateway AWS settings.
+
+    Constructs a ``boto3.Session`` using credentials configured on the
+    gateway entry in ``agentsec.yaml``.  The resolution order mirrors the
+    standard AWS credential chain but allows each gateway to override it:
+
+    1. Explicit keys (``aws_access_key_id`` + ``aws_secret_access_key``,
+       plus optional ``aws_session_token``).
+    2. Named profile (``aws_profile`` from ``~/.aws/credentials``).
+    3. Default boto3 credential chain (environment variables, instance
+       role, etc.).
+
+    If ``aws_role_arn`` is also set, the base credentials from steps 1-3
+    are used to call ``sts:AssumeRole`` and the resulting temporary
+    credentials replace the session.
+
+    Args:
+        gw_settings: A :class:`GatewaySettings` instance with optional
+            ``aws_*`` fields.
+
+    Returns:
+        A ``(session, credentials, region)`` tuple where *credentials*
+        may be ``None`` if no credentials could be resolved.
+    """
+    import boto3
+
+    # Step 1: Build base session kwargs from per-gateway config
+    session_kwargs = {}
+    if gw_settings.aws_region:
+        session_kwargs["region_name"] = gw_settings.aws_region
+    if gw_settings.aws_access_key_id and gw_settings.aws_secret_access_key:
+        # Explicit keys take precedence over profile
+        session_kwargs["aws_access_key_id"] = gw_settings.aws_access_key_id
+        session_kwargs["aws_secret_access_key"] = gw_settings.aws_secret_access_key
+        if gw_settings.aws_session_token:
+            session_kwargs["aws_session_token"] = gw_settings.aws_session_token
+    elif gw_settings.aws_profile:
+        session_kwargs["profile_name"] = gw_settings.aws_profile
+
+    session = boto3.Session(**session_kwargs)
+
+    # Step 2: Assume role if configured (cross-account / least-privilege)
+    if gw_settings.aws_role_arn:
+        sts = session.client("sts")
+        assumed = sts.assume_role(
+            RoleArn=gw_settings.aws_role_arn,
+            RoleSessionName="agentsec-gateway",
+        )
+        temp = assumed["Credentials"]
+        session = boto3.Session(
+            aws_access_key_id=temp["AccessKeyId"],
+            aws_secret_access_key=temp["SecretAccessKey"],
+            aws_session_token=temp["SessionToken"],
+            region_name=gw_settings.aws_region or session.region_name,
+        )
+
+    credentials = session.get_credentials()
+    region = gw_settings.aws_region or session.region_name or "us-east-1"
+    return session, credentials, region
+
+
 class _StreamingBodyWrapper:
     """
     Wrapper that mimics boto3's StreamingBody interface while wrapping pre-read content.
@@ -381,14 +443,11 @@ def _handle_agentcore_gateway_call(operation_name: str, api_params: Dict, instan
         }
         
         if gw_settings.auth_mode == "aws_sigv4":
-            # AWS Sig V4 authentication
-            import boto3
+            # AWS Sig V4 authentication (per-gateway credentials)
             from botocore.auth import SigV4Auth
             from botocore.awsrequest import AWSRequest
             
-            session = boto3.Session()
-            credentials = session.get_credentials()
-            region = session.region_name or "us-east-1"
+            session, credentials, region = _build_aws_session(gw_settings)
             if credentials is None:
                 logger.error("[GATEWAY] No AWS credentials available for Sig V4 signing")
                 raise SecurityPolicyError(
@@ -489,7 +548,6 @@ def _handle_agentcore_api_mode(operation_name: str, api_params: Dict, wrapped, a
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL: AgentCore")
     logger.debug(f"║ Operation: AgentCore.{operation_name} | LLM Mode: {mode} | Integration: {integration_mode}")
@@ -768,8 +826,8 @@ def _handle_patcher_error(error: Exception, operation: str) -> Optional[Decision
     logger.warning(f"[{operation}] Inspection error: {error_type}: {error}")
     
     if fail_open:
-        logger.warning(f"fail_open=True, allowing request despite inspection error")
-        return Decision.allow(reasons=[f"Inspection error ({error_type}), fail_open=True"])
+        logger.warning(f"llm_fail_open=True, allowing request despite inspection error")
+        return Decision.allow(reasons=[f"Inspection error ({error_type}), llm_fail_open=True"])
     else:
         logger.error(f"fail_open=False, blocking request due to inspection error")
         decision = Decision.block(reasons=[f"Inspection error: {error_type}: {error}"])
@@ -848,14 +906,11 @@ def _handle_bedrock_gateway_call(operation_name: str, api_params: Dict, gw_setti
         
         # Send to gateway with native format - auth based on gw_settings.auth_mode
         if gw_settings.auth_mode == "aws_sigv4":
-            import boto3
             from botocore.auth import SigV4Auth
             from botocore.awsrequest import AWSRequest
             
             body_bytes = json.dumps(request_body).encode('utf-8')
-            session = boto3.Session()
-            credentials = session.get_credentials()
-            region = session.region_name or "us-east-1"
+            session, credentials, region = _build_aws_session(gw_settings)
             if credentials is None:
                 logger.error("[GATEWAY] No AWS credentials available for Sig V4 signing")
                 raise SecurityPolicyError(
@@ -929,9 +984,10 @@ def _handle_bedrock_gateway_call(operation_name: str, api_params: Dict, gw_setti
         
     except httpx.HTTPStatusError as e:
         logger.error(f"[GATEWAY] HTTP error: {e}")
-        # Log the response body for debugging 400/4xx errors
+        # Log status code and truncated body for debugging (avoid leaking sensitive data)
         try:
-            logger.error(f"[GATEWAY] Response body: {e.response.text}")
+            body_preview = e.response.text[:200] if hasattr(e.response, 'text') else ""
+            logger.error(f"[GATEWAY] HTTP {e.response.status_code} — body preview: {body_preview}")
         except Exception:
             pass
         if gw_settings.fail_open:
@@ -1137,6 +1193,7 @@ def _handle_agentcore_call(wrapped, instance, args, kwargs, operation_name: str,
     Returns:
         AgentCore response
     """
+    set_inspection_context(done=False)
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] AgentCore.{operation_name} - inspection skipped (mode=off or already done)")
         return wrapped(*args, **kwargs)
@@ -1174,6 +1231,10 @@ def _wrap_make_api_call(wrapped, instance, args, kwargs):
     if not _is_bedrock_operation(operation_name, api_params):
         return wrapped(*args, **kwargs)
     
+    # Reset inspection context for each new API call so successive calls
+    # (e.g. bedrock-1 then bedrock-2) are each independently inspected.
+    set_inspection_context(done=False)
+    
     if not _should_inspect():
         logger.debug(f"[PATCHED CALL] Bedrock.{operation_name} - inspection skipped (mode=off or already done)")
         return wrapped(*args, **kwargs)
@@ -1198,7 +1259,6 @@ def _wrap_make_api_call(wrapped, instance, args, kwargs):
     
     mode = _state.get_llm_mode()
     integration_mode = _state.get_llm_integration_mode()
-    logger.debug(f"")
     logger.debug(f"╔══════════════════════════════════════════════════════════════")
     logger.debug(f"║ [PATCHED] LLM CALL: {model_id}")
     logger.debug(f"║ Operation: Bedrock.{operation_name} | LLM Mode: {mode} | Integration: {integration_mode}")

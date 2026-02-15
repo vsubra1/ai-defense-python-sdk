@@ -31,23 +31,23 @@ def main() -> None:
     
     # Enable protection with enforce mode for LLM calls
     # This will autopatch supported LLM clients (OpenAI, Azure OpenAI, Bedrock, Vertex AI)
+    config_path = str(Path(__file__).parent.parent / "agentsec.yaml")
     agentsec.protect(
+        config=config_path,  # gateway URLs, API endpoints, timeouts
         llm_integration_mode=os.getenv("AGENTSEC_LLM_INTEGRATION_MODE", "api"),
         mcp_integration_mode=os.getenv("AGENTSEC_MCP_INTEGRATION_MODE", "api"),
-        api_mode={"llm": {"mode": "enforce"}},
     )
-    # Alternative: use a YAML config file (recommended for production):
-    #   agentsec.protect(config="agentsec.yaml")
     
     # Alternative: Use Gateway mode instead of API mode
-    # Each provider gets a named gateway with default: true
+    # Each provider gets a named gateway with full explicit config
     # agentsec.protect(
     #     llm_integration_mode="gateway",
     #     gateway_mode={
     #         "llm_gateways": {
-    #             "openai-default": {
+    #             "openai-1": {
     #                 "gateway_url": "https://gateway.../openai-conn",
     #                 "gateway_api_key": "your-openai-gateway-key",
+    #                 "auth_mode": "api_key",
     #                 "provider": "openai",
     #                 "default": True,
     #             },

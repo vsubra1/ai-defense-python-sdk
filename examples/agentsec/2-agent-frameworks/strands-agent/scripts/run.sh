@@ -39,7 +39,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 AGENTS_DIR="$(cd "$PROJECT_DIR/.." && pwd)"
 ENV_FILE="$AGENTS_DIR/../.env"
-ENV_EXAMPLE="$AGENTS_DIR/_shared/templates/env-example.txt"
+ENV_EXAMPLE="$AGENTS_DIR/../.env.example"
 CONFIG_DIR="$PROJECT_DIR/config"
 
 # Default demo question that triggers MCP tool call

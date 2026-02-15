@@ -229,7 +229,7 @@ class GatewayClient:
         headers = self._build_headers(extra_headers)
         
         logger.debug(f"Gateway request to {self.gateway_url}")
-        logger.debug(f"Gateway request payload: {request_body}")
+        logger.debug(f"Gateway request payload keys: {list(request_body.keys()) if isinstance(request_body, dict) else type(request_body).__name__}")
         
         last_error: Optional[Exception] = None
         
@@ -243,7 +243,7 @@ class GatewayClient:
                 )
                 response.raise_for_status()
                 response_json = response.json()
-                logger.debug(f"Gateway response: {response_json}")
+                logger.debug(f"Gateway response: status={response.status_code}, keys={list(response_json.keys()) if isinstance(response_json, dict) else type(response_json).__name__}")
                 return response_json
             except Exception as e:
                 last_error = e
@@ -283,7 +283,7 @@ class GatewayClient:
         headers = self._build_headers(extra_headers)
         
         logger.debug(f"Gateway async request to {self.gateway_url}")
-        logger.debug(f"Gateway async request payload: {request_body}")
+        logger.debug(f"Gateway async request payload keys: {list(request_body.keys()) if isinstance(request_body, dict) else type(request_body).__name__}")
         
         last_error: Optional[Exception] = None
         
@@ -301,7 +301,7 @@ class GatewayClient:
                     )
                     response.raise_for_status()
                     response_json = response.json()
-                    logger.debug(f"Gateway async response: {response_json}")
+                    logger.debug(f"Gateway async response: status={response.status_code}, keys={list(response_json.keys()) if isinstance(response_json, dict) else type(response_json).__name__}")
                     return response_json
                 except Exception as e:
                     last_error = e

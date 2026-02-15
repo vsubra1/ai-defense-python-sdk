@@ -17,6 +17,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SIMPLE_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PROJECT_DIR="$(cd "$SIMPLE_DIR/../../.." && pwd)"
 
+# Colors for output (defined early so error messages can use them)
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
+NC='\033[0m' # No Color
+
 # Check poetry is available
 if ! command -v poetry &> /dev/null; then
     echo -e "${RED}ERROR: Poetry is not installed${NC}"
@@ -42,23 +51,17 @@ fi
 
 # Parse arguments
 VERBOSE=false
-for arg in "$@"; do
-    case $arg in
+while [[ $# -gt 0 ]]; do
+    case $1 in
         -v|--verbose)
             VERBOSE=true
             shift
             ;;
+        *)
+            shift
+            ;;
     esac
 done
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-MAGENTA='\033[0;35m'
-NC='\033[0m' # No Color
 
 # Track results
 PASSED=0
@@ -290,6 +293,7 @@ run_example_tests "mcp_example.py" "mcp_example.py"
 run_example_tests "gateway_mode_example.py" "gateway_mode_example.py"
 run_example_tests "skip_inspection_example.py" "skip_inspection_example.py"
 run_example_tests "simple_strands_bedrock.py" "simple_strands_bedrock.py"
+run_example_tests "multi_gateway_example.py" "multi_gateway_example.py"
 
 # Calculate total time
 TOTAL_END_TIME=$(date +%s)

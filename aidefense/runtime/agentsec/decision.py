@@ -120,11 +120,12 @@ class Decision:
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Decision):
             return NotImplemented
+        # Note: raw_response is intentionally excluded — it is an implementation
+        # detail (full API response) and not part of the decision's semantic identity.
         return (
             self.action == other.action
             and self.reasons == other.reasons
             and self.sanitized_content == other.sanitized_content
-            # Include new fields in equality check
             and self.severity == other.severity
             and self.classifications == other.classifications
             and self.rules == other.rules

@@ -92,9 +92,10 @@ def example_openai_gateway_programmatic():
         llm_integration_mode="gateway",
         gateway_mode={
             "llm_gateways": {
-                "openai-default": {
+                "openai-1": {
                     "gateway_url": "https://gateway.preview.aidefense.aiteam.cisco.com/{tenant}/connections/{openai-conn}",
                     "gateway_api_key": os.getenv("OPENAI_API_KEY"),
+                    "auth_mode": "api_key",
                     "provider": "openai",
                     "default": True,
                 },
@@ -117,31 +118,41 @@ def example_multi_provider_gateway():
         llm_integration_mode="gateway",
         gateway_mode={
             "llm_gateways": {
-                "openai-default": {
+                "openai-1": {
                     "gateway_url": "https://gateway.../openai-conn",
                     "gateway_api_key": os.getenv("OPENAI_API_KEY"),
+                    "auth_mode": "api_key",
                     "provider": "openai",
                     "default": True,
                 },
-                "azure-openai-default": {
+                "azure-openai-1": {
                     "gateway_url": "https://gateway.../azure-conn",
-                    "gateway_api_key": os.getenv("AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY"),
+                    "gateway_api_key": os.getenv("AZURE_OPENAI_API_KEY"),
+                    "auth_mode": "api_key",
                     "provider": "azure_openai",
                     "default": True,
                 },
-                "vertexai-default": {
+                "vertexai-1": {
                     "gateway_url": "https://gateway.../vertexai-conn",
                     "auth_mode": "google_adc",
                     "provider": "vertexai",
                     "default": True,
-                    # Vertex AI uses ADC OAuth2 token, no static API key
+                    # Per-gateway GCP ADC credentials (all optional)
+                    "gcp_project": "my-project",
+                    "gcp_location": "us-central1",
+                    # Or explicit SA: "gcp_service_account_key_file": "/path/to/key.json",
+                    # Or impersonation: "gcp_target_service_account": "sa@project.iam.gserviceaccount.com",
                 },
-                "bedrock-default": {
+                "bedrock-1": {
                     "gateway_url": "https://gateway.../bedrock-conn",
                     "auth_mode": "aws_sigv4",
                     "provider": "bedrock",
                     "default": True,
-                    # Bedrock uses AWS Sig V4, no static API key
+                    # Per-gateway AWS SigV4 credentials (all optional)
+                    "aws_region": "us-east-1",
+                    "aws_profile": "default",
+                    # Or explicit: "aws_access_key_id": "...", "aws_secret_access_key": "...",
+                    # Or assume-role: "aws_role_arn": "arn:aws:iam::123456789012:role/...",
                 },
             },
         },
@@ -150,7 +161,13 @@ def example_multi_provider_gateway():
 
 
 def example_mcp_gateway_programmatic():
-    """Configure MCP Gateway mode entirely in code."""
+    """Configure MCP Gateway mode entirely in code.
+
+    MCP gateways support three auth_mode values:
+      - "none"                       — No authentication (default)
+      - "api_key"                    — API key sent in "api-key" header
+      - "oauth2_client_credentials"  — OAuth 2.0 Client Credentials grant
+    """
     from aidefense.runtime import agentsec
 
     mcp_server_url = os.getenv("MCP_SERVER_URL", "https://remote.mcpservers.org/fetch/mcp")
@@ -161,6 +178,7 @@ def example_mcp_gateway_programmatic():
             "mcp_gateways": {
                 mcp_server_url: {
                     "gateway_url": "https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/tenant/{tenant}/connections/{connection}/server/{server}",
+                    "auth_mode": "none",  # no auth needed for this MCP server
                 },
             },
         },
@@ -183,9 +201,10 @@ def example_both_gateway_programmatic():
         mcp_integration_mode="gateway",
         gateway_mode={
             "llm_gateways": {
-                "openai-default": {
+                "openai-1": {
                     "gateway_url": "https://gateway.../openai-conn",
                     "gateway_api_key": os.getenv("OPENAI_API_KEY"),
+                    "auth_mode": "api_key",
                     "provider": "openai",
                     "default": True,
                 },
@@ -193,6 +212,7 @@ def example_both_gateway_programmatic():
             "mcp_gateways": {
                 os.getenv("MCP_SERVER_URL", "https://remote.mcpservers.org/fetch/mcp"): {
                     "gateway_url": "https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/...",
+                    "auth_mode": "none",
                 },
             },
         },
@@ -209,9 +229,10 @@ def example_mixed_mode():
         llm_integration_mode="gateway",
         gateway_mode={
             "llm_gateways": {
-                "openai-default": {
+                "openai-1": {
                     "gateway_url": "https://gateway.../openai-conn",
                     "gateway_api_key": os.getenv("OPENAI_API_KEY"),
+                    "auth_mode": "api_key",
                     "provider": "openai",
                     "default": True,
                 },
@@ -263,7 +284,7 @@ def main():
     print("Gateway mode routes LLM/MCP calls through Cisco AI Defense Gateway,")
     print("which handles inspection and enforcement before proxying to providers.")
     print()
-    print("Each provider gets a named gateway with 'default: true'.")
+    print("Each provider gets a named gateway (e.g. openai-1) with 'default: true'.")
     print()
     print("Programmatic (inline):")
     print("  from aidefense.runtime import agentsec")
@@ -271,9 +292,10 @@ def main():
     print('      llm_integration_mode="gateway",')
     print('      gateway_mode={')
     print('          "llm_gateways": {')
-    print('              "openai-default": {')
+    print('              "openai-1": {')
     print('                  "gateway_url": "https://gateway.../openai-conn",')
     print('                  "gateway_api_key": "your-key",')
+    print('                  "auth_mode": "api_key",')
     print('                  "provider": "openai",')
     print('                  "default": True,')
     print('              },')
@@ -300,7 +322,8 @@ def main():
     print()
     print("Gateway Mode (gateway_mode dict):")
     print("  llm_gateways          : dict of named LLM gateways {name: {gateway_url, gateway_api_key, provider, default}}")
-    print("  mcp_gateways          : dict of MCP gateway configs {mcp_server_url: {gateway_url, gateway_api_key}}")
+    print("  mcp_gateways          : dict of MCP gateway configs {mcp_server_url: {gateway_url, auth_mode, ...}}")
+    print("    auth_mode           : 'none' (default), 'api_key', or 'oauth2_client_credentials'")
     print()
     print("Top-level:")
     print("  config                : path to agentsec.yaml")

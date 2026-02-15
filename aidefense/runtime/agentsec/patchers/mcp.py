@@ -140,10 +140,33 @@ def _wrap_streamablehttp_client(wrapped, instance, args, kwargs):
     # Resolve gateway config for this URL
     gw_settings = _get_gateway_settings_for_url(original_url)
     if gw_settings is None:
-        return wrapped(*args, **kwargs)
+        # Gateway mode is active but no gateway configured for this MCP URL.
+        # Raise rather than silently connecting directly (no inspection).
+        raise SecurityPolicyError(
+            Decision.block(
+                reasons=[
+                    f"MCP gateway mode enabled but no gateway configured "
+                    f"for URL '{original_url}'"
+                ]
+            ),
+            f"MCP gateway mode is active but no gateway configuration "
+            f"found for URL '{original_url}'. Configure a gateway for "
+            f"this URL in gateway_mode.mcp_gateways or switch to api "
+            f"integration mode.",
+        )
 
     if not gw_settings.url:
-        return wrapped(*args, **kwargs)
+        # Gateway entry exists but has no URL — treat as misconfiguration.
+        raise SecurityPolicyError(
+            Decision.block(
+                reasons=[
+                    f"MCP gateway configured for URL '{original_url}' "
+                    f"but gateway URL is empty"
+                ]
+            ),
+            f"MCP gateway entry found for '{original_url}' but gateway "
+            f"URL is not set. Check gateway_mode.mcp_gateways configuration.",
+        )
 
     if not _gateway_mode_logged:
         logger.info("[MCP GATEWAY] Redirecting MCP connections to gateway")
@@ -151,20 +174,40 @@ def _wrap_streamablehttp_client(wrapped, instance, args, kwargs):
         logger.debug(f"[MCP GATEWAY] Gateway URL: {gw_settings.url}")
         _gateway_mode_logged = True
 
+    # Copy kwargs to avoid mutating the caller's dict
+    kwargs = dict(kwargs)
     # Replace URL with gateway URL
     if 'url' in kwargs:
         kwargs['url'] = gw_settings.url
     elif args:
         args = (gw_settings.url,) + args[1:]
 
-    # Inject auth headers from gateway settings
-    if gw_settings.api_key:
+    # Inject auth headers based on auth_mode
+    if gw_settings.auth_mode == "api_key" and gw_settings.api_key:
         headers = kwargs.get('headers', {})
         if headers is None:
             headers = {}
         headers = dict(headers)
         headers['api-key'] = gw_settings.api_key
         kwargs['headers'] = headers
+
+    elif gw_settings.auth_mode == "oauth2_client_credentials":
+        from .._oauth2 import get_oauth2_token
+
+        token = get_oauth2_token(
+            token_url=gw_settings.oauth2_token_url,
+            client_id=gw_settings.oauth2_client_id,
+            client_secret=gw_settings.oauth2_client_secret,
+            scopes=gw_settings.oauth2_scopes,
+        )
+        headers = kwargs.get('headers', {})
+        if headers is None:
+            headers = {}
+        headers = dict(headers)
+        headers['Authorization'] = f'Bearer {token}'
+        kwargs['headers'] = headers
+
+    # auth_mode == "none" — no headers injected
 
     return wrapped(*args, **kwargs)
 
@@ -176,6 +219,8 @@ async def _wrap_call_tool(wrapped, instance, args, kwargs):
     - API mode: MCPInspector (makes API calls for inspection)
     - Gateway mode: MCPGatewayInspector (pass-through, gateway handles inspection)
     """
+    # Reset inspection context for this new call
+    set_inspection_context(done=False)
     # Extract tool info
     tool_name = args[0] if args else kwargs.get("name", "")
     arguments = args[1] if len(args) > 1 else kwargs.get("arguments", {})
@@ -185,7 +230,6 @@ async def _wrap_call_tool(wrapped, instance, args, kwargs):
     
     # Log the call
     if use_gateway:
-        logger.debug(f"")
         logger.debug(f"╔══════════════════════════════════════════════════════════════")
         logger.debug(f"║ [PATCHED] MCP TOOL CALL: {tool_name}")
         logger.debug(f"║ Arguments: {arguments}")
@@ -193,7 +237,6 @@ async def _wrap_call_tool(wrapped, instance, args, kwargs):
         logger.debug(f"╚══════════════════════════════════════════════════════════════")
     else:
         mode = _state.get_mcp_mode()
-        logger.debug(f"")
         logger.debug(f"╔══════════════════════════════════════════════════════════════")
         logger.debug(f"║ [PATCHED] MCP TOOL CALL: {tool_name}")
         logger.debug(f"║ Arguments: {arguments}")
@@ -241,6 +284,8 @@ async def _wrap_call_tool(wrapped, instance, args, kwargs):
         raise
     except Exception as e:
         logger.warning(f"[PATCHED CALL] MCP.call_tool({tool_name}) - Response inspection error: {e}")
+        # Mark inspection as done (fail-open) so context is not left incomplete
+        set_inspection_context(decision=Decision.allow(reasons=[f"MCP response inspection error: {e}"]), done=True)
     
     logger.debug(f"[PATCHED CALL] MCP.call_tool({tool_name}) - complete")
     return result
@@ -253,6 +298,8 @@ async def _wrap_get_prompt(wrapped, instance, args, kwargs):
     - API mode: MCPInspector (makes API calls for inspection)
     - Gateway mode: MCPGatewayInspector (pass-through, gateway handles inspection)
     """
+    # Reset inspection context for this new call
+    set_inspection_context(done=False)
     # Extract prompt info
     prompt_name = args[0] if args else kwargs.get("name", "")
     arguments = args[1] if len(args) > 1 else kwargs.get("arguments", {})
@@ -262,7 +309,6 @@ async def _wrap_get_prompt(wrapped, instance, args, kwargs):
     
     # Log the call
     if use_gateway:
-        logger.debug(f"")
         logger.debug(f"╔══════════════════════════════════════════════════════════════")
         logger.debug(f"║ [PATCHED] MCP GET PROMPT: {prompt_name}")
         logger.debug(f"║ Arguments: {arguments}")
@@ -270,7 +316,6 @@ async def _wrap_get_prompt(wrapped, instance, args, kwargs):
         logger.debug(f"╚══════════════════════════════════════════════════════════════")
     else:
         mode = _state.get_mcp_mode()
-        logger.debug(f"")
         logger.debug(f"╔══════════════════════════════════════════════════════════════")
         logger.debug(f"║ [PATCHED] MCP GET PROMPT: {prompt_name}")
         logger.debug(f"║ Arguments: {arguments}")
@@ -318,6 +363,8 @@ async def _wrap_get_prompt(wrapped, instance, args, kwargs):
         raise
     except Exception as e:
         logger.warning(f"[PATCHED CALL] MCP.get_prompt({prompt_name}) - Response inspection error: {e}")
+        # Mark inspection as done (fail-open) so context is not left incomplete
+        set_inspection_context(decision=Decision.allow(reasons=[f"MCP response inspection error: {e}"]), done=True)
     
     logger.debug(f"[PATCHED CALL] MCP.get_prompt({prompt_name}) - complete")
     return result
@@ -330,6 +377,8 @@ async def _wrap_read_resource(wrapped, instance, args, kwargs):
     - API mode: MCPInspector (makes API calls for inspection)
     - Gateway mode: MCPGatewayInspector (pass-through, gateway handles inspection)
     """
+    # Reset inspection context for this new call
+    set_inspection_context(done=False)
     # Extract resource info - read_resource takes a URI
     resource_uri = args[0] if args else kwargs.get("uri", "")
     
@@ -338,14 +387,12 @@ async def _wrap_read_resource(wrapped, instance, args, kwargs):
     
     # Log the call
     if use_gateway:
-        logger.debug(f"")
         logger.debug(f"╔══════════════════════════════════════════════════════════════")
         logger.debug(f"║ [PATCHED] MCP READ RESOURCE: {resource_uri}")
         logger.debug(f"║ Integration: gateway (gateway handles inspection)")
         logger.debug(f"╚══════════════════════════════════════════════════════════════")
     else:
         mode = _state.get_mcp_mode()
-        logger.debug(f"")
         logger.debug(f"╔══════════════════════════════════════════════════════════════")
         logger.debug(f"║ [PATCHED] MCP READ RESOURCE: {resource_uri}")
         logger.debug(f"║ MCP Mode: {mode} | Integration: {integration_mode}")
@@ -392,6 +439,8 @@ async def _wrap_read_resource(wrapped, instance, args, kwargs):
         raise
     except Exception as e:
         logger.warning(f"[PATCHED CALL] MCP.read_resource({resource_uri}) - Response inspection error: {e}")
+        # Mark inspection as done (fail-open) so context is not left incomplete
+        set_inspection_context(decision=Decision.allow(reasons=[f"MCP response inspection error: {e}"]), done=True)
     
     logger.debug(f"[PATCHED CALL] MCP.read_resource({resource_uri}) - complete")
     return result

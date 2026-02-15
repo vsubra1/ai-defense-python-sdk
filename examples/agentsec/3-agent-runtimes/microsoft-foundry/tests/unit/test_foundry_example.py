@@ -220,30 +220,16 @@ class TestAgentFactoryStructure:
         assert "tool_calls" in content, "Should check for tool_calls"
         assert "ToolMessage" in content, "Should use ToolMessage for tool results"
 
-    def test_agent_factory_configures_gateway_mode(self):
-        """Test that agent_factory.py has gateway mode configuration."""
+    def test_agent_factory_uses_yaml_config(self):
+        """Test that agent_factory.py uses agentsec.yaml config file."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         agent_factory_path = os.path.join(project_dir, "_shared", "agent_factory.py")
         
         with open(agent_factory_path, "r") as f:
             content = f.read()
         
-        assert "llm_integration_mode" in content, "Should configure llm_integration_mode"
-        assert "AGENTSEC_LLM_INTEGRATION_MODE" in content, "Should read from AGENTSEC_LLM_INTEGRATION_MODE env var"
-        assert "llm_gateways" in content, "Should configure llm_gateways"
-
-    def test_agent_factory_configures_api_mode(self):
-        """Test that agent_factory.py has API mode configuration."""
-        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        agent_factory_path = os.path.join(project_dir, "_shared", "agent_factory.py")
-        
-        with open(agent_factory_path, "r") as f:
-            content = f.read()
-        
-        assert "api_mode=" in content, "Should configure api_mode"
-        assert "AGENTSEC_API_MODE_LLM" in content, "Should read from AGENTSEC_API_MODE_LLM env var"
-        assert "endpoint" in content, "Should configure api endpoint"
-        assert "api_key" in content, "Should configure api key"
+        assert "agentsec.yaml" in content, "Should reference agentsec.yaml config file"
+        assert "config=" in content, "Should pass config= parameter to agentsec.protect()"
 
     def test_agent_factory_has_invoke_function(self):
         """Test that agent_factory.py exports invoke_agent function."""
@@ -553,13 +539,13 @@ class TestMCPTools:
         assert "MCP_SERVER_URL" in content, "Should read MCP_SERVER_URL from environment"
     
     def test_agent_factory_has_mcp_config(self):
-        """Test that agent_factory.py includes MCP configuration."""
+        """Test that agent_factory.py includes MCP tool support."""
         project_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         agent_factory_file = os.path.join(project_dir, "_shared", "agent_factory.py")
         with open(agent_factory_file, "r") as f:
             content = f.read()
-        assert "mcp_integration_mode" in content, "agent_factory should configure mcp_integration_mode"
-        assert '"mcp"' in content, "agent_factory should configure mcp in api_mode"
+        assert "mcp_tools" in content, "agent_factory should reference mcp_tools"
+        assert "agentsec.yaml" in content, "agent_factory should use agentsec.yaml for MCP config"
     
     def test_pyproject_has_mcp_dependency(self):
         """Test that pyproject.toml includes mcp dependency."""

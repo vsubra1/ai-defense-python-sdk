@@ -348,22 +348,19 @@ class TestAgentCoreResponseParsing:
 class TestAgentCoreGatewayMode:
     """Test AgentCore gateway mode functionality."""
 
-    @patch("boto3.Session")
+    @patch("aidefense.runtime.agentsec.patchers.bedrock._build_aws_session")
     @patch("httpx.Client")
-    def test_gateway_mode_uses_sig_v4(self, mock_httpx_client, mock_boto3_session):
-        """Test gateway mode uses AWS Sig V4 authentication."""
+    def test_gateway_mode_uses_sig_v4(self, mock_httpx_client, mock_build_session):
+        """Test gateway mode uses AWS Sig V4 authentication via _build_aws_session."""
         from aidefense.runtime.agentsec.patchers.bedrock import _handle_agentcore_gateway_call
         from aidefense.runtime.agentsec.gateway_settings import GatewaySettings
         
-        # Mock boto3 session and credentials
-        mock_session = MagicMock()
+        # Mock _build_aws_session return
         mock_credentials = MagicMock()
         mock_credentials.access_key = "test-access-key"
         mock_credentials.secret_key = "test-secret-key"
         mock_credentials.token = None
-        mock_session.get_credentials.return_value = mock_credentials
-        mock_session.region_name = "us-east-1"
-        mock_boto3_session.return_value = mock_session
+        mock_build_session.return_value = (MagicMock(), mock_credentials, "us-east-1")
         
         # Mock HTTP response
         mock_response = MagicMock()
@@ -395,10 +392,56 @@ class TestAgentCoreGatewayMode:
                 gw_settings=gw_settings
             )
         
+        # Verify _build_aws_session was called with gw_settings
+        mock_build_session.assert_called_once_with(gw_settings)
         # Verify Sig V4 was called
         mock_sig_v4.assert_called_once()
         # Verify HTTP call was made
         mock_client_instance.post.assert_called_once()
+
+    @patch("aidefense.runtime.agentsec.patchers.bedrock._build_aws_session")
+    @patch("httpx.Client")
+    def test_gateway_mode_sig_v4_with_per_gateway_region(self, mock_httpx_client, mock_build_session):
+        """Test per-gateway aws_region is passed through to _build_aws_session."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _handle_agentcore_gateway_call
+        from aidefense.runtime.agentsec.gateway_settings import GatewaySettings
+        
+        mock_credentials = MagicMock()
+        mock_credentials.access_key = "key"
+        mock_credentials.secret_key = "secret"
+        mock_credentials.token = None
+        mock_build_session.return_value = (MagicMock(), mock_credentials, "eu-west-1")
+        
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"payload": json.dumps({"response": "Hi"})}
+        mock_client_instance = MagicMock()
+        mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+        mock_client_instance.__exit__ = MagicMock(return_value=False)
+        mock_client_instance.post.return_value = mock_response
+        mock_httpx_client.return_value = mock_client_instance
+        
+        gw_settings = GatewaySettings(
+            url="https://gateway.example.com",
+            auth_mode="aws_sigv4",
+            aws_region="eu-west-1",
+            aws_profile="team-b",
+        )
+        
+        with patch("botocore.auth.SigV4Auth"):
+            _handle_agentcore_gateway_call(
+                operation_name="InvokeAgentRuntime",
+                api_params={
+                    "agentRuntimeArn": "arn:aws:bedrock:eu-west-1:123:agent-runtime/test",
+                    "payload": json.dumps({"prompt": "Hello"}),
+                },
+                instance=MagicMock(),
+                gw_settings=gw_settings,
+            )
+        
+        # Verify _build_aws_session receives the gw_settings with per-gateway config
+        called_gw = mock_build_session.call_args[0][0]
+        assert called_gw.aws_region == "eu-west-1"
+        assert called_gw.aws_profile == "team-b"
 
     def test_gateway_mode_raises_when_not_configured(self):
         """Test gateway mode raises error when Bedrock gateway not configured."""
@@ -537,7 +580,7 @@ class TestAgentCoreStateConfig:
                 initialized=True,
                 gateway_mode={
                     "llm_gateways": {
-                        "bedrock-default": {
+                        "bedrock-1": {
                             "gateway_url": "https://gw.example.com",
                             "provider": "bedrock",
                             "default": True,

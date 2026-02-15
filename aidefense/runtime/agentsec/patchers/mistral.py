@@ -171,9 +171,10 @@ def _handle_gateway_call_sync(
     gateway_api_key = gw_settings.api_key
     if not gateway_url or not gateway_api_key:
         logger.warning("Gateway mode enabled but Mistral gateway not configured")
-        set_inspection_context(decision=Decision.allow(reasons=["Mistral gateway not configured"]), done=True)
+        block_decision = Decision.block(reasons=["Mistral gateway not configured"])
+        set_inspection_context(decision=block_decision, done=True)
         raise SecurityPolicyError(
-            Decision.block(reasons=["Mistral gateway not configured"]),
+            block_decision,
             "Gateway mode enabled but Mistral gateway not configured (check gateway_mode.llm_gateways for a mistral provider entry in config)",
         )
     request_body = {
@@ -208,7 +209,9 @@ def _handle_gateway_call_sync(
         if gw_settings.fail_open:
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
             raise
-        raise SecurityPolicyError(Decision.block(reasons=["Gateway unavailable"]), f"Gateway HTTP error: {e}")
+        block_decision = Decision.block(reasons=["Gateway unavailable"])
+        set_inspection_context(decision=block_decision, done=True)
+        raise SecurityPolicyError(block_decision, f"Gateway HTTP error: {e}")
     except SecurityPolicyError:
         raise
     except Exception as e:
@@ -216,7 +219,9 @@ def _handle_gateway_call_sync(
         if gw_settings.fail_open:
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
             raise
-        raise
+        block_decision = Decision.block(reasons=[f"Gateway error: {e}"])
+        set_inspection_context(decision=block_decision, done=True)
+        raise SecurityPolicyError(block_decision, f"Gateway error: {e}")
 
 
 async def _handle_gateway_call_async(
@@ -232,8 +237,10 @@ async def _handle_gateway_call_async(
     gateway_api_key = gw_settings.api_key
     if not gateway_url or not gateway_api_key:
         logger.warning("Gateway mode enabled but Mistral gateway not configured")
+        block_decision = Decision.block(reasons=["Mistral gateway not configured"])
+        set_inspection_context(decision=block_decision, done=True)
         raise SecurityPolicyError(
-            Decision.block(reasons=["Mistral gateway not configured"]),
+            block_decision,
             "Gateway mode enabled but Mistral gateway not configured (check gateway_mode.llm_gateways for a mistral provider entry in config)",
         )
     request_body = {
@@ -268,7 +275,9 @@ async def _handle_gateway_call_async(
         if gw_settings.fail_open:
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
             raise
-        raise SecurityPolicyError(Decision.block(reasons=["Gateway unavailable"]), f"Gateway HTTP error: {e}")
+        block_decision = Decision.block(reasons=["Gateway unavailable"])
+        set_inspection_context(decision=block_decision, done=True)
+        raise SecurityPolicyError(block_decision, f"Gateway HTTP error: {e}")
     except SecurityPolicyError:
         raise
     except Exception as e:
@@ -276,7 +285,9 @@ async def _handle_gateway_call_async(
         if gw_settings.fail_open:
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
             raise
-        raise
+        block_decision = Decision.block(reasons=[f"Gateway error: {e}"])
+        set_inspection_context(decision=block_decision, done=True)
+        raise SecurityPolicyError(block_decision, f"Gateway error: {e}")
 
 
 class _MistralStreamingInspectionWrapper:
@@ -425,6 +436,7 @@ class _MistralAsyncFakeStreamWrapper:
 
 def _wrap_complete(wrapped, instance, args, kwargs):
     """Sync wrapper for Chat.complete."""
+    set_inspection_context(done=False)
     if not _should_inspect():
         return wrapped(*args, **kwargs)
     model = kwargs.get("model", "unknown")
@@ -473,6 +485,7 @@ def _wrap_complete(wrapped, instance, args, kwargs):
 
 def _wrap_stream(wrapped, instance, args, kwargs):
     """Sync wrapper for Chat.stream."""
+    set_inspection_context(done=False)
     if not _should_inspect():
         return wrapped(*args, **kwargs)
     model = kwargs.get("model", "unknown")
@@ -504,6 +517,7 @@ def _wrap_stream(wrapped, instance, args, kwargs):
 
 async def _wrap_complete_async(wrapped, instance, args, kwargs):
     """Async wrapper for Chat.complete_async."""
+    set_inspection_context(done=False)
     if not _should_inspect():
         return await wrapped(*args, **kwargs)
     model = kwargs.get("model", "unknown")
@@ -552,6 +566,7 @@ async def _wrap_complete_async(wrapped, instance, args, kwargs):
 
 async def _wrap_stream_async(wrapped, instance, args, kwargs):
     """Async wrapper for Chat.stream_async."""
+    set_inspection_context(done=False)
     if not _should_inspect():
         return await wrapped(*args, **kwargs)
     model = kwargs.get("model", "unknown")

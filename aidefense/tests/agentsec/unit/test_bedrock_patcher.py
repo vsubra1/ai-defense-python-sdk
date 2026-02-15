@@ -5,6 +5,229 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 from aidefense.runtime.agentsec.decision import Decision
 from aidefense.runtime.agentsec.exceptions import SecurityPolicyError
+from aidefense.runtime.agentsec.gateway_settings import GatewaySettings
+
+
+class TestBuildAwsSession:
+    """Tests for the _build_aws_session helper function."""
+
+    @patch("boto3.Session")
+    def test_default_fallback(self, mock_session_cls):
+        """No AWS fields set: boto3.Session() called with no args, region falls back."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _build_aws_session
+
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = MagicMock()
+        mock_session.region_name = None
+        mock_session_cls.return_value = mock_session
+
+        gw = GatewaySettings(url="https://gw.example.com", auth_mode="aws_sigv4")
+        session, credentials, region = _build_aws_session(gw)
+
+        mock_session_cls.assert_called_once_with()
+        assert region == "us-east-1"  # fallback default
+        assert credentials is not None
+
+    @patch("boto3.Session")
+    def test_profile_based(self, mock_session_cls):
+        """aws_region + aws_profile: Session created with both kwargs."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _build_aws_session
+
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = MagicMock()
+        mock_session.region_name = "eu-west-1"
+        mock_session_cls.return_value = mock_session
+
+        gw = GatewaySettings(
+            url="https://gw.example.com",
+            auth_mode="aws_sigv4",
+            aws_region="eu-west-1",
+            aws_profile="team-b",
+        )
+        session, credentials, region = _build_aws_session(gw)
+
+        mock_session_cls.assert_called_once_with(
+            region_name="eu-west-1", profile_name="team-b"
+        )
+        assert region == "eu-west-1"
+
+    @patch("boto3.Session")
+    def test_explicit_keys(self, mock_session_cls):
+        """Explicit access key + secret key: Session created with key kwargs."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _build_aws_session
+
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = MagicMock()
+        mock_session.region_name = "us-west-2"
+        mock_session_cls.return_value = mock_session
+
+        gw = GatewaySettings(
+            url="https://gw.example.com",
+            auth_mode="aws_sigv4",
+            aws_region="us-west-2",
+            aws_access_key_id="AKIAEXAMPLE",
+            aws_secret_access_key="secret123",
+        )
+        session, credentials, region = _build_aws_session(gw)
+
+        mock_session_cls.assert_called_once_with(
+            region_name="us-west-2",
+            aws_access_key_id="AKIAEXAMPLE",
+            aws_secret_access_key="secret123",
+        )
+
+    @patch("boto3.Session")
+    def test_explicit_keys_with_session_token(self, mock_session_cls):
+        """Explicit keys + session token: all four kwargs passed."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _build_aws_session
+
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = MagicMock()
+        mock_session.region_name = "us-east-1"
+        mock_session_cls.return_value = mock_session
+
+        gw = GatewaySettings(
+            url="https://gw.example.com",
+            auth_mode="aws_sigv4",
+            aws_region="us-east-1",
+            aws_access_key_id="AKIAEXAMPLE",
+            aws_secret_access_key="secret123",
+            aws_session_token="token456",
+        )
+        _build_aws_session(gw)
+
+        mock_session_cls.assert_called_once_with(
+            region_name="us-east-1",
+            aws_access_key_id="AKIAEXAMPLE",
+            aws_secret_access_key="secret123",
+            aws_session_token="token456",
+        )
+
+    @patch("boto3.Session")
+    def test_explicit_keys_ignores_profile(self, mock_session_cls):
+        """When both explicit keys AND profile are set, explicit keys take precedence."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _build_aws_session
+
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = MagicMock()
+        mock_session.region_name = "us-east-1"
+        mock_session_cls.return_value = mock_session
+
+        gw = GatewaySettings(
+            url="https://gw.example.com",
+            auth_mode="aws_sigv4",
+            aws_access_key_id="AKIAEXAMPLE",
+            aws_secret_access_key="secret123",
+            aws_profile="should-be-ignored",
+        )
+        _build_aws_session(gw)
+
+        # profile_name should NOT be in the call kwargs
+        call_kwargs = mock_session_cls.call_args[1]
+        assert "profile_name" not in call_kwargs
+        assert call_kwargs["aws_access_key_id"] == "AKIAEXAMPLE"
+
+    @patch("boto3.Session")
+    def test_assume_role(self, mock_session_cls):
+        """aws_role_arn: calls sts.assume_role and creates a second session."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _build_aws_session
+
+        # First session (base)
+        mock_base_session = MagicMock()
+        mock_base_session.region_name = "us-east-1"
+        mock_sts = MagicMock()
+        mock_sts.assume_role.return_value = {
+            "Credentials": {
+                "AccessKeyId": "ASIAEXAMPLE",
+                "SecretAccessKey": "assumed-secret",
+                "SessionToken": "assumed-token",
+            }
+        }
+        mock_base_session.client.return_value = mock_sts
+
+        # Second session (assumed)
+        mock_assumed_session = MagicMock()
+        mock_assumed_session.get_credentials.return_value = MagicMock()
+        mock_assumed_session.region_name = "us-east-1"
+
+        mock_session_cls.side_effect = [mock_base_session, mock_assumed_session]
+
+        gw = GatewaySettings(
+            url="https://gw.example.com",
+            auth_mode="aws_sigv4",
+            aws_profile="base-account",
+            aws_role_arn="arn:aws:iam::123456789012:role/cross-role",
+        )
+        session, credentials, region = _build_aws_session(gw)
+
+        # Verify STS was called
+        mock_sts.assume_role.assert_called_once_with(
+            RoleArn="arn:aws:iam::123456789012:role/cross-role",
+            RoleSessionName="agentsec-gateway",
+        )
+        # Second session should use temp creds
+        assert mock_session_cls.call_count == 2
+        second_call_kwargs = mock_session_cls.call_args_list[1][1]
+        assert second_call_kwargs["aws_access_key_id"] == "ASIAEXAMPLE"
+        assert second_call_kwargs["aws_secret_access_key"] == "assumed-secret"
+        assert second_call_kwargs["aws_session_token"] == "assumed-token"
+
+    @patch("boto3.Session")
+    def test_missing_credentials_returns_none(self, mock_session_cls):
+        """When session.get_credentials() returns None, credentials is None."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _build_aws_session
+
+        mock_session = MagicMock()
+        mock_session.get_credentials.return_value = None
+        mock_session.region_name = "us-east-1"
+        mock_session_cls.return_value = mock_session
+
+        gw = GatewaySettings(url="https://gw.example.com", auth_mode="aws_sigv4")
+        session, credentials, region = _build_aws_session(gw)
+
+        assert credentials is None
+
+    @patch("aidefense.runtime.agentsec.patchers.bedrock._build_aws_session")
+    @patch("httpx.Client")
+    def test_gateway_mode_aws_sigv4_uses_build_session(self, mock_httpx_client, mock_build):
+        """Gateway mode with aws_sigv4 calls _build_aws_session with gw_settings."""
+        from aidefense.runtime.agentsec.patchers.bedrock import _handle_bedrock_gateway_call
+
+        mock_credentials = MagicMock()
+        mock_credentials.access_key = "AKIAEXAMPLE"
+        mock_credentials.secret_key = "secret"
+        mock_credentials.token = None
+        mock_build.return_value = (MagicMock(), mock_credentials, "us-east-1")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "output": {"message": {"content": [{"text": "Hi"}]}},
+            "ResponseMetadata": {},
+        }
+        mock_client_instance = MagicMock()
+        mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+        mock_client_instance.__exit__ = MagicMock(return_value=False)
+        mock_client_instance.post.return_value = mock_response
+        mock_httpx_client.return_value = mock_client_instance
+
+        gw_settings = GatewaySettings(
+            url="https://gateway.example.com",
+            auth_mode="aws_sigv4",
+            aws_region="eu-west-1",
+            aws_profile="team-b",
+        )
+
+        with patch("botocore.auth.SigV4Auth"):
+            _handle_bedrock_gateway_call(
+                operation_name="Converse",
+                api_params={
+                    "modelId": "anthropic.claude-3-haiku-20240307-v1:0",
+                    "messages": [{"role": "user", "content": [{"text": "test"}]}],
+                },
+                gw_settings=gw_settings,
+            )
+
+        mock_build.assert_called_once_with(gw_settings)
 
 
 class TestBedrockPatcher:
@@ -46,7 +269,7 @@ class TestBedrockPatcher:
             mock_ctx.return_value = MagicMock(done=False)
             assert _should_inspect() is True
 
-    @patch("aidefense.runtime.agentsec.patchers.bedrock._state")
+    @patch("aidefense.runtime.agentsec.patchers._base._state")
     def test_integration_mode_affects_resolve_gateway(self, mock_state):
         """Test resolve_gateway_settings returns None when integration mode is api."""
         from aidefense.runtime.agentsec.patchers._base import resolve_gateway_settings
@@ -57,11 +280,11 @@ class TestBedrockPatcher:
         assert result is None
         
         mock_state.get_llm_integration_mode.return_value = "gateway"
-        # When gateway mode but no default gateway for provider, returns None
+        # When gateway mode but no default gateway for provider, raises SecurityPolicyError
         mock_state.get_llm_gateway.return_value = None
         mock_state.get_default_gateway_for_provider.return_value = None
-        result = resolve_gateway_settings("bedrock")
-        assert result is None
+        with pytest.raises(SecurityPolicyError, match="no gateway configuration found for provider"):
+            resolve_gateway_settings("bedrock")
 
 
 class TestBedrockMessageParsing:

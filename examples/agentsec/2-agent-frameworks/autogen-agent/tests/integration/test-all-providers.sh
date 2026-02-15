@@ -40,7 +40,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 # Test configuration
 TIMEOUT_SECONDS=120
 # Test question - uses fetch_url tool (same MCP server for both API and Gateway modes)
-TEST_QUESTION="Use the fetch_tool tool to fetch https://example.com and tell me what this domain is for."
+TEST_QUESTION="Use the fetch_url tool to fetch https://example.com and tell me what this domain is for."
 
 # Detect timeout command (gtimeout on macOS via homebrew, timeout on Linux)
 if command -v gtimeout &> /dev/null; then

@@ -40,74 +40,114 @@ gateway_mode:
 
   # LLM Gateways
   #
-  # Each entry is a named gateway. Set "default: true" to make it the
-  # auto-selected gateway for that provider (used when no named gateway
-  # is explicitly activated via agentsec.gateway("name")).
-  #
-  # Non-default gateways inherit auth_mode from the default gateway for
-  # the same provider.
+  # Each entry is a named gateway with full, explicit configuration.
+  # Set "default: true" to make it the auto-selected gateway for that
+  # provider (used when no named gateway is explicitly activated via
+  # agentsec.gateway("name")).
   #
   # Named gateway usage:
-  #   with agentsec.gateway("bedrock-analytics"):
+  #   with agentsec.gateway("bedrock-2"):
   #       response = bedrock_client.invoke_model(...)
   llm_gateways:
-    # -- Provider defaults (auto-selected by detected LLM provider) -----------
-    openai-default:
+    openai-1:
       gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/aea95bfe-ebd1-4ff0-8ab6-6e0d4a7fae45
       gateway_api_key: ${OPENAI_API_KEY}
+      auth_mode: api_key
       provider: openai
       default: true
 
-    azure-openai-default:
+    azure-openai-1:
       gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/023327d5-ef36-4489-8d56-187d2f4730b3/connections/8b707b37-b00b-4fc7-b787-70943226f992/openai/deployments/gpt4/chat/completions?api-version=2023-05-15
-      gateway_api_key: ${AGENTSEC_AZURE_OPENAI_GATEWAY_API_KEY}
+      gateway_api_key: ${AZURE_OPENAI_API_KEY}
+      auth_mode: api_key
       provider: azure_openai
       default: true
 
-    vertexai-default:
+    vertexai-1:
       gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/1232becf-681c-4120-90ad-9feea8ae9f27
       auth_mode: google_adc         # uses Google ADC, no api_key needed
       provider: vertexai
       default: true
-      # google_genai patcher falls back to vertexai default
+      # google_genai patcher falls back to vertexai gateway
+      # Per-gateway GCP ADC credentials (all optional, fall back to
+      # default google.auth.default() when omitted):
+      gcp_project: ${VERTEXAI_1_GCP_PROJECT}
+      gcp_location: ${VERTEXAI_1_GCP_LOCATION}
+      # -- OR explicit SA key file (uncomment): --
+      # gcp_service_account_key_file: ${VERTEXAI_1_SA_KEY_FILE}
+      # -- OR SA impersonation (uncomment): --
+      # gcp_target_service_account: my-sa@project.iam.gserviceaccount.com
 
-    bedrock-default:
+    bedrock-1:
       gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/3a1f81d9-0f02-4faa-84db-3f07bbd8024c
       auth_mode: aws_sigv4          # uses IAM credentials, no api_key needed
       provider: bedrock
       default: true
+      # Per-gateway AWS SigV4 credentials (all optional, fall back to
+      # default boto3 credential chain when omitted):
+      aws_region: ${BEDROCK_1_AWS_REGION}
+      aws_profile: ${BEDROCK_1_AWS_PROFILE}
+      # -- OR explicit keys (uncomment): --
+      # aws_access_key_id: ${BEDROCK_1_AWS_ACCESS_KEY_ID}
+      # aws_secret_access_key: ${BEDROCK_1_AWS_SECRET_ACCESS_KEY}
+      # aws_session_token: ${BEDROCK_1_AWS_SESSION_TOKEN}
+      # -- OR cross-account assume-role (uncomment): --
+      # aws_role_arn: arn:aws:iam::123456789012:role/bedrock-role
 
-    cohere-default:
+    cohere-1:
       gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/b7db955e-c85f-4d24-a8eb-7821ee1badff
       gateway_api_key: ${COHERE_API_KEY}
+      auth_mode: api_key
       provider: cohere
       default: true
 
-    mistral-default:
+    mistral-1:
       gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/ebb20f41-924f-4fd7-b97e-92f4eb85ddba
       gateway_api_key: ${MISTRAL_API_KEY}
+      auth_mode: api_key
       provider: mistral
       default: true
 
     # -- Additional named gateways (selected via agentsec.gateway("name")) ----
-    bedrock-analytics:
-      gateway_url: https://gw.aidefense.cisco.com/t1/conn/bedrock-analytics
+    bedrock-2:
+      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/8ed6c8ae-66c7-4fcb-940a-c9fc80891c96
+      auth_mode: aws_sigv4          # fully explicit, no inheritance
       provider: bedrock
-      # auth_mode: inherited from bedrock-default -> aws_sigv4
+      aws_region: ${BEDROCK_2_AWS_REGION}
+      aws_profile: ${BEDROCK_2_AWS_PROFILE}
 
 
   # MCP Gateways (keyed by original MCP server URL)
   # Each MCP server that should be routed through a gateway must be listed
   # explicitly by its URL.
+  #
+  # Supported auth_mode values per MCP server:
+  #   none                       - No authentication (default)
+  #   api_key                    - API key sent in "api-key" header
+  #   oauth2_client_credentials  - OAuth 2.0 Client Credentials grant
   mcp_gateways:
     https://remote.mcpservers.org/fetch/mcp:
       gateway_url: https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/tenant/192caeea-9955-44a9-8ef4-19006f5beb10/connections/d988fe8f-ff40-4877-9728-398b7cb13259/server/e740184e-e082-420b-8e6c-eb74e0c60c24
+      auth_mode: none
 
-    # Additional MCP servers (uncomment and configure as needed):
-    # https://other-mcp-server.example.com/mcp:
-    #   gateway_url: https://gw.agent.aidefense.cisco.com/mcp/t1/other
-    #   gateway_api_key: ${MCP_OTHER_API_KEY}
-    #   fail_open: false
+    https://mcp.time.mcpcentral.io:
+      gateway_url: https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/tenant/192caeea-9955-44a9-8ef4-19006f5beb10/connections/2d9e1387-d1ad-4c0a-93d6-61e1c39ce0c0/server/5446f8d2-04bf-433e-9e27-acb2f80185fa
+      auth_mode: none
+
+    # -- Example: API Key auth --
+    # https://api-key-mcp.example.com/mcp:
+    #   gateway_url: https://gw.agent.aidefense.cisco.com/mcp/t1/apikey-server
+    #   auth_mode: api_key
+    #   gateway_api_key: ${MCP_GATEWAY_API_KEY}
+
+    # -- Example: OAuth 2.0 Client Credentials --
+    # https://oauth-mcp.example.com/mcp:
+    #   gateway_url: https://gw.agent.aidefense.cisco.com/mcp/t1/oauth-server
+    #   auth_mode: oauth2_client_credentials
+    #   oauth2_token_url: https://auth.example.com/oauth/token
+    #   oauth2_client_id: ${MCP_OAUTH_CLIENT_ID}
+    #   oauth2_client_secret: ${MCP_OAUTH_CLIENT_SECRET}
+    #   oauth2_scopes: "read write"
 
 # -- API mode configuration --------------------------------------------------
 # Used when llm_integration_mode or mcp_integration_mode is "api".
