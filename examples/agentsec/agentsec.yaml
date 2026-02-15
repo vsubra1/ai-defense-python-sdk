@@ -57,7 +57,7 @@ gateway_mode:
       default: true
 
     azure-openai-1:
-      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/023327d5-ef36-4489-8d56-187d2f4730b3/connections/8b707b37-b00b-4fc7-b787-70943226f992/openai/deployments/gpt4/chat/completions?api-version=2023-05-15
+      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/60b6effc-8a07-4b05-89a9-a12c8c3ac6e7
       gateway_api_key: ${AZURE_OPENAI_API_KEY}
       auth_mode: api_key
       provider: azure_openai

@@ -242,15 +242,10 @@ def create_agents(llm_config):
     assistant = AssistantAgent(
         name="assistant",
         llm_config=llm_config,
-        system_message="""You are a helpful assistant with access to the fetch_url tool.
-
-When the user asks to fetch a URL or asks about a webpage, use the fetch_url tool.
-Always use the tool to get actual content rather than guessing what a page contains.
-After fetching, summarize the content for the user.
-
-Tool usage: fetch_url(url='https://example.com')
-
-Conclude your answer with the word TERMINATE.""",
+        system_message="""You are a helpful research assistant.
+You have a tool called fetch_url that can retrieve the contents of a web page.
+When someone asks about a website, use fetch_url to get the actual content and then summarize it.
+When done, end your reply with TASK_COMPLETE.""",
     )
     logger.debug("Assistant agent created")
     
@@ -259,7 +254,7 @@ Conclude your answer with the word TERMINATE.""",
         name="user_proxy",
         human_input_mode="NEVER",  # Don't ask for human input
         max_consecutive_auto_reply=3,
-        is_termination_msg=lambda x: (x.get("content") or "").rstrip().endswith("TERMINATE"),
+        is_termination_msg=lambda x: (x.get("content") or "").rstrip().endswith("TASK_COMPLETE"),
         code_execution_config=False,  # Disable code execution
     )
     logger.debug("User proxy agent created")
@@ -355,7 +350,7 @@ async def run_conversation(initial_message: str = None):
                         print(f"\n{'='*60}", flush=True)
                         print("Final Answer:", flush=True)
                         print("="*60, flush=True)
-                        print(content.replace("TERMINATE", "").strip(), flush=True)
+                        print(content.replace("TASK_COMPLETE", "").strip(), flush=True)
                         break
             
         except SecurityPolicyError as e:
@@ -392,7 +387,7 @@ async def run_conversation(initial_message: str = None):
                     for msg in reversed(chat_result.chat_history):
                         content = msg.get('content', '')
                         if content and msg.get('role') == 'assistant':
-                            print(f"\nAssistant: {content.replace('TERMINATE', '').strip()}\n", flush=True)
+                            print(f"\nAssistant: {content.replace('TASK_COMPLETE', '').strip()}\n", flush=True)
                             break
                     
             except SecurityPolicyError as e:

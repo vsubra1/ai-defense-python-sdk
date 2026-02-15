@@ -2,7 +2,7 @@
 
 **agentsec** accelerates your integration with **Cisco AI Defense** when building AI applications using:
 
-- **Chat Completions** - Direct LLM calls (OpenAI, Azure, Bedrock, Vertex AI)
+- **Chat Completions** - Direct LLM calls (OpenAI, Azure, Bedrock, Vertex AI, Cohere, Mistral, LiteLLM)
 - **Agentic Frameworks** - LangChain, LangGraph, CrewAI, AutoGen, Strands, OpenAI Agents SDK
 - **Agentic Runtimes (PaaS)** - AWS Bedrock AgentCore, GCP Vertex AI Agent Engine, Microsoft Azure AI Foundry
 
@@ -67,9 +67,10 @@ cp .env.example .env
 cd 1-simple && poetry install && poetry run python basic_protection.py
 
 # 3. Or run an agent framework example
-cd 2-agent-frameworks/strands-agent && poetry install && ./scripts/run.sh --openai
+cd ../2-agent-frameworks/strands-agent && poetry install && ./scripts/run.sh --openai
 
-# 4. Run all tests (from the repo root: ai-defense-python-sdk/)
+# 4. Run all tests (from the repo root)
+cd /path/to/ai-defense-python-sdk
 ./scripts/run-unit-tests.sh           # ~1210 unit tests
 ./scripts/run-integration-tests.sh    # Full integration tests
 ```
@@ -93,6 +94,8 @@ Configuration is split between two files:
 |----------|:--------:|-------------|
 | `AI_DEFENSE_API_MODE_LLM_API_KEY` | Yes | AI Defense API key for LLM inspection |
 | `AI_DEFENSE_API_MODE_MCP_API_KEY` | For MCP | AI Defense API key for MCP inspection |
+| `MCP_SERVER_URL` | For MCP examples | MCP server URL (e.g. `https://remote.mcpservers.org/fetch/mcp`). Examples that use MCP tools read this; if unset, MCP tools are disabled. |
+| `GOOGLE_AI_SDK` | For Vertex AI | Which Google AI SDK to use: `vertexai` (legacy, default) or `google_genai` (modern, recommended) |
 
 > **Note**: Log level, endpoints, and inspection modes are configured in `agentsec.yaml` (not `.env`). Log level can optionally be overridden via the `AGENTSEC_LOG_LEVEL` environment variable.
 
@@ -114,6 +117,8 @@ Configuration is split between two files:
 | **Cohere** | `COHERE_API_KEY` | `COHERE_API_KEY` (same key) |
 | **Mistral AI** | `MISTRAL_API_KEY` | `MISTRAL_API_KEY` (same key) |
 
+> LiteLLM uses the underlying provider's credentials (e.g. `OPENAI_API_KEY` for OpenAI calls via LiteLLM) — no separate LiteLLM key is needed.
+>
 > All gateway URLs are configured in `agentsec.yaml` (not `.env`). Gateway mode uses the same provider API key as API mode -- the YAML references them via `${VAR_NAME}` syntax.
 
 ### By Example Path
@@ -169,6 +174,8 @@ llm_integration_mode: gateway
 mcp_integration_mode: api
 ```
 
+> **Important — No Silent Fallback**: If gateway mode is enabled but no gateway is configured for the provider (LLM) or URL (MCP), agentsec raises a `SecurityPolicyError` instead of silently falling back to API mode. This prevents accidental changes to your security posture. Either configure a gateway for every provider/URL you use, or explicitly set the integration mode to `api`.
+
 ### Supported LLM Providers
 
 agentsec automatically patches these LLM client libraries:
@@ -178,10 +185,11 @@ agentsec automatically patches these LLM client libraries:
 | **OpenAI** | `openai` | `chat.completions.create()` |
 | **Azure OpenAI** | `openai` | `chat.completions.create()` (with Azure endpoint) |
 | **AWS Bedrock** | `boto3` | `converse()`, `converse_stream()` |
-| **Google Vertex AI** | `google-cloud-aiplatform` | `ChatVertexAI`, `generate_content()` |
+| **Google Vertex AI** | `google-cloud-aiplatform` | `GenerativeModel.generate_content()`, `generate_content_async()` |
 | **Google GenAI** | `google-genai` | `generate_content()`, `generate_content_async()` |
 | **Cohere** | `cohere` | `V2Client.chat()`, `V2Client.chat_stream()`, `AsyncV2Client.chat()`, `AsyncV2Client.chat_stream()` |
 | **Mistral AI** | `mistralai` | `Chat.complete()`, `Chat.stream()`, `Chat.complete_async()`, `Chat.stream_async()` |
+| **LiteLLM** | `litellm` | `completion()`, `acompletion()` (catches provider calls that bypass native SDKs, e.g. CrewAI + Vertex AI) |
 
 ### MCP Tool Inspection
 
@@ -217,6 +225,27 @@ api_mode:
     mode: enforce    # off | monitor | enforce
   mcp:
     mode: monitor
+```
+
+### Fail-Open vs. Fail-Closed
+
+When the inspection API or gateway is unreachable (timeout, network error), agentsec can either let the call proceed or block it:
+
+| Setting | Behavior | When to Use |
+|---------|----------|-------------|
+| `fail_open: true` (default) | Allow the LLM/MCP call if inspection fails | Development, non-critical workloads |
+| `fail_open: false` | Block the call and raise an error if inspection fails | Production, high-security environments |
+
+Set per mode in `agentsec.yaml`:
+```yaml
+api_mode:
+  llm_defaults:
+    fail_open: false    # Block on inspection failure
+    timeout: 5          # Seconds before timeout
+gateway_mode:
+  llm_defaults:
+    fail_open: true
+    timeout: 60         # Gateway proxies to LLM — needs more time
 ```
 
 ### Integration Mode Prerequisites
@@ -304,7 +333,7 @@ For quick testing, inline configuration is also supported (see [Programmatic Con
 
 ### Named Gateway Pattern (Multi-Gateway)
 
-Route the same LLM provider through different gateway connections based on context. Define multiple gateways for the same provider in `agentsec.yaml`, marking one as `default: true`, and use the `gateway()` context manager to select a named gateway at runtime:
+Route the same LLM provider through different gateway connections based on context. Define multiple gateways for the same provider in `agentsec.yaml`, marking one as `default: true`, and use `gateway()` (context manager) or `use_gateway()` (decorator) to select a named gateway at runtime:
 
 ```yaml
 # agentsec.yaml
@@ -359,6 +388,14 @@ with agentsec.gateway("bedrock-2"):
     response = bedrock.converse(
         modelId="anthropic.claude-3-5-sonnet-20241022-v2:0",
         messages=[{"role": "user", "content": [{"text": "Complex question"}]}],
+    )
+
+# Alternative: Use @use_gateway() decorator for an entire function
+@agentsec.use_gateway("bedrock-2")
+def ask_complex_question(prompt: str):
+    return bedrock.converse(
+        modelId="anthropic.claude-3-5-sonnet-20241022-v2:0",
+        messages=[{"role": "user", "content": [{"text": prompt}]}],
     )
 ```
 
@@ -811,6 +848,14 @@ agentsec uses two configuration files:
 | **`agentsec.yaml`** | All non-secret settings | Integration modes, gateway URLs, endpoints, timeouts, retry policy, inspection modes |
 | **`.env`** | Secrets and provider credentials | API keys, cloud credentials (referenced via `${VAR}` in YAML) |
 
+**Configuration merge order** (highest priority wins):
+
+```
+protect() kwargs  >  agentsec.yaml  >  hardcoded defaults
+```
+
+This means you can override any YAML setting by passing it directly to `protect()`, which is useful for testing or one-off runs.
+
 ### Getting Started
 
 ```bash
@@ -855,8 +900,21 @@ All non-secret configuration lives in `agentsec.yaml`. Key sections:
 | `api_mode.mcp` | MCP inspection endpoint, mode, API key ref | `mode: monitor` |
 | `gateway_mode.llm_gateways` | Named gateway entries with URLs and providers | See `agentsec.yaml` |
 | `gateway_mode.mcp_gateways` | MCP server → gateway URL mappings (with per-server `auth_mode`) | See `agentsec.yaml` |
-| `*.defaults` | Timeout, retry, fail_open per mode | `timeout: 5` |
+| `*.defaults.fail_open` | Allow or block calls on inspection failure | `true` |
+| `*.defaults.timeout` | Seconds before timeout | API: `5`, Gateway: `60` |
+| `*.defaults.retry` | Retry policy for transient errors | `total: 2, backoff_factor: 0.5` |
 | `logging` | Log level and format | `level: DEBUG` |
+
+**Retry configuration** — both API mode and gateway mode support automatic retries for transient HTTP errors:
+
+```yaml
+api_mode:
+  llm_defaults:
+    retry:
+      total: 2                          # Max retries (0 = no retries)
+      backoff_factor: 0.5               # Exponential backoff multiplier
+      status_codes: [429, 500, 502, 503, 504]  # HTTP codes to retry on
+```
 
 > See `agentsec.yaml` for the full configuration reference with inline documentation.
 
@@ -1068,19 +1126,44 @@ set_metadata(
 
 ### Inspection Results
 
-The `Decision` object includes detailed inspection results:
+When a `SecurityPolicyError` is raised, the attached `Decision` object includes detailed inspection results:
 
 ```python
-decision = inspector.inspect_conversation(messages, metadata)
+from aidefense.runtime.agentsec import SecurityPolicyError
 
-decision.action          # "allow", "block", "sanitize", "monitor_only"
-decision.is_safe         # True if action != "block"
-decision.reasons         # List of reasons
-decision.severity        # "low", "medium", "high", "critical"
-decision.classifications # ["pii", "prompt_injection", ...]
-decision.event_id        # Unique event identifier for tracking
-decision.explanation     # Human-readable explanation
+try:
+    response = client.chat.completions.create(...)
+except SecurityPolicyError as e:
+    decision = e.decision
+    decision.action          # "allow", "block", "sanitize", "monitor_only"
+    decision.is_safe         # True if action != "block"
+    decision.reasons         # List of reasons (e.g., ["prompt_injection_detected"])
+    decision.severity        # "low", "medium", "high", "critical"
+    decision.classifications # ["pii", "prompt_injection", ...]
+    decision.event_id        # Unique event identifier for tracking/audit
+    decision.explanation     # Human-readable explanation
 ```
+
+### `protect()` API Reference
+
+The full signature of `agentsec.protect()`:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `patch_clients` | `bool` | `True` | Whether to auto-patch LLM client libraries |
+| `auto_dotenv` | `bool` | `True` | Load `.env` file before YAML parsing so `${VAR}` refs resolve |
+| `config` | `str` | `None` | Path to `agentsec.yaml` config file |
+| `llm_integration_mode` | `str` | `None` | `"api"` or `"gateway"` |
+| `mcp_integration_mode` | `str` | `None` | `"api"` or `"gateway"` |
+| `gateway_mode` | `dict` | `None` | Gateway config (overrides YAML `gateway_mode` section) |
+| `api_mode` | `dict` | `None` | API config (overrides YAML `api_mode` section) |
+| `pool_max_connections` | `int` | `100` | Max HTTP connections for inspection API pool |
+| `pool_max_keepalive` | `int` | `20` | Max keepalive connections in pool |
+| `custom_logger` | `Logger` | `None` | Custom Python `logging.Logger` instance |
+| `log_file` | `str` | `None` | Path to write log output |
+| `log_format` | `str` | `None` | `"text"` or `"json"` |
+
+> `protect()` is idempotent — calling it multiple times has no effect after the first successful call.
 
 ---
 
@@ -1149,6 +1232,7 @@ cd /path/to/ai-defense-python-sdk
 | GCP auth fails | Run `gcloud auth application-default login` |
 | OpenAI 401 Unauthorized | Verify key at https://platform.openai.com/api-keys |
 | `SecurityPolicyError` raised | Expected in enforce mode when content violates policies |
+| `SecurityPolicyError: Gateway mode is active but no gateway configuration found` | Gateway mode is enabled but no gateway is configured for the provider/URL. Add a gateway entry in `agentsec.yaml` or switch to `api` mode. |
 | `[BLOCKED] Prompt Injection` | AI Defense detected prompt injection - this is working correctly |
 | No inspection happening | Ensure `agentsec.protect()` is called BEFORE importing LLM clients |
 | MCP tool calls not inspected | Ensure `mcp` package is installed and `api_mode.mcp.mode` is set in `agentsec.yaml` |
@@ -1158,23 +1242,38 @@ cd /path/to/ai-defense-python-sdk
 
 By default, agentsec operates quietly (log level `WARNING`). To see what's happening under the hood - including messages sent to AI Defense, responses received, and inspection decisions - enable debug logging.
 
-#### Logging Environment Variables
+#### Logging Configuration
 
-| Variable | Values | Default | Description |
-|----------|--------|---------|-------------|
-| `AGENTSEC_LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING`, `ERROR` | `WARNING` | Controls verbosity |
-| `AGENTSEC_LOG_FORMAT` | `text`, `json` | `text` | Output format (use `json` for log aggregators) |
-| `AGENTSEC_LOG_FILE` | file path | None | Optional file to write logs to |
+Logging can be set in three ways (highest priority wins):
+
+| Method | Example | Priority |
+|--------|---------|:--------:|
+| **`protect()` kwargs** | `protect(log_file="out.log", log_format="json")` | Highest |
+| **`agentsec.yaml`** | `logging: { level: DEBUG, format: json }` | Medium |
+| **Environment variables** | `AGENTSEC_LOG_LEVEL=DEBUG` | Lowest |
+
+| Variable / YAML key | Values | Default | Description |
+|----------------------|--------|---------|-------------|
+| `AGENTSEC_LOG_LEVEL` / `logging.level` | `DEBUG`, `INFO`, `WARNING`, `ERROR` | `WARNING` | Controls verbosity |
+| `AGENTSEC_LOG_FORMAT` / `logging.format` | `text`, `json` | `text` | Output format (use `json` for log aggregators) |
+| `AGENTSEC_LOG_FILE` / `protect(log_file=)` | file path | None | Optional file to write logs to |
 
 #### How to Enable Debug Logging
 
-**Option 1: Environment variable (recommended)**
+**Option 1: In `agentsec.yaml` (recommended for projects)**
+```yaml
+logging:
+  level: DEBUG
+  format: text
+```
+
+**Option 2: Environment variable**
 ```bash
 export AGENTSEC_LOG_LEVEL=DEBUG
 python your_agent.py
 ```
 
-**Option 2: In your code (before `agentsec.protect()`)**
+**Option 3: In your code (before `agentsec.protect()`)**
 ```python
 import os
 os.environ["AGENTSEC_LOG_LEVEL"] = "DEBUG"
@@ -1183,7 +1282,7 @@ from aidefense.runtime import agentsec
 agentsec.protect()
 ```
 
-**Option 3: Command line (one-off)**
+**Option 4: Command line (one-off)**
 ```bash
 AGENTSEC_LOG_LEVEL=DEBUG python your_agent.py
 ```

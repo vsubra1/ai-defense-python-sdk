@@ -67,6 +67,12 @@ class GatewaySettings:
     gcp_service_account_key_file: Optional[str] = None
     gcp_target_service_account: Optional[str] = None
 
+    # Model name override - when set, the gateway request uses this model name
+    # instead of the one from the client.  Useful when the gateway connection
+    # is configured for a specific model (e.g. Azure deployment "gpt-3.5-turbo")
+    # but the application client uses a different model name (e.g. "gpt-4o").
+    gateway_model: Optional[str] = None
+
     # OAuth2 Client Credentials (only used when auth_mode="oauth2_client_credentials")
     oauth2_token_url: Optional[str] = None
     oauth2_client_id: Optional[str] = None

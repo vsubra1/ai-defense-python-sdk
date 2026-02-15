@@ -169,7 +169,9 @@ def _serialize_part(part: Any) -> Optional[Dict]:
                 return dumped
         except (TypeError, Exception):
             try:
-                dumped = part.model_dump(exclude_none=True)
+                # Keep by_alias=True so field names stay camelCase
+                # (e.g. "functionCall" not "function_call")
+                dumped = part.model_dump(by_alias=True, exclude_none=True)
                 if dumped:
                     return dumped
             except Exception:
@@ -236,7 +238,9 @@ def _serialize_sdk_object(obj: Any) -> Any:
             return obj.model_dump(mode="json", by_alias=True, exclude_none=True)
         except (TypeError, Exception):
             try:
-                return obj.model_dump(exclude_none=True)
+                # Keep by_alias=True so field names stay camelCase
+                # (e.g. "functionDeclarations" not "function_declarations")
+                return obj.model_dump(by_alias=True, exclude_none=True)
             except Exception:
                 pass
     # Pydantic v1
@@ -325,22 +329,70 @@ def _handle_google_genai_gateway_call(
     
     # Extract config settings
     if config:
-        config_dict = {}
-        if hasattr(config, "temperature") and config.temperature is not None:
-            config_dict["temperature"] = config.temperature
-        if hasattr(config, "max_output_tokens") and config.max_output_tokens is not None:
-            config_dict["maxOutputTokens"] = config.max_output_tokens
-        if hasattr(config, "top_p") and config.top_p is not None:
-            config_dict["topP"] = config.top_p
-        if hasattr(config, "top_k") and config.top_k is not None:
-            config_dict["topK"] = config.top_k
-        if hasattr(config, "system_instruction") and config.system_instruction:
-            if isinstance(config.system_instruction, str):
-                request_body["systemInstruction"] = {"parts": [{"text": config.system_instruction}]}
-        if config_dict:
-            request_body["generationConfig"] = config_dict
+        # === Generation Config (goes inside "generationConfig" in the REST body) ===
+        gen_config: Dict[str, Any] = {}
+        _GEN_CONFIG_ATTRS = [
+            ("temperature", "temperature"),
+            ("max_output_tokens", "maxOutputTokens"),
+            ("top_p", "topP"),
+            ("top_k", "topK"),
+            ("candidate_count", "candidateCount"),
+            ("stop_sequences", "stopSequences"),
+            ("response_mime_type", "responseMimeType"),
+            ("presence_penalty", "presencePenalty"),
+            ("frequency_penalty", "frequencyPenalty"),
+            ("seed", "seed"),
+        ]
+        for attr, camel_key in _GEN_CONFIG_ATTRS:
+            val = getattr(config, attr, None)
+            if val is not None:
+                gen_config[camel_key] = val
 
-        # Extract tools (needed for function-calling / tool-use)
+        # response_schema may be a Pydantic model that needs serialization
+        rs = getattr(config, "response_schema", None)
+        if rs is not None:
+            serialized_rs = _serialize_sdk_object(rs)
+            if serialized_rs is not None:
+                gen_config["responseSchema"] = serialized_rs
+
+        if gen_config:
+            request_body["generationConfig"] = gen_config
+
+        # === System Instruction (top-level in the REST body) ===
+        si = getattr(config, "system_instruction", None)
+        if si is not None:
+            if isinstance(si, str):
+                request_body["systemInstruction"] = {"parts": [{"text": si}]}
+            elif hasattr(si, "parts"):
+                # Content object — serialize each part
+                parts = []
+                for p in si.parts:
+                    sd = _serialize_part(p)
+                    if sd:
+                        parts.append(sd)
+                if parts:
+                    request_body["systemInstruction"] = {"parts": parts}
+            elif isinstance(si, list):
+                # List of strings or Content objects
+                parts = []
+                for item in si:
+                    if isinstance(item, str):
+                        parts.append({"text": item})
+                    elif hasattr(item, "text"):
+                        parts.append({"text": item.text})
+                    else:
+                        sd = _serialize_sdk_object(item)
+                        if sd:
+                            parts.append(sd)
+                if parts:
+                    request_body["systemInstruction"] = {"parts": parts}
+            else:
+                # Try generic serialization (dict, Pydantic, etc.)
+                serialized_si = _serialize_sdk_object(si)
+                if serialized_si:
+                    request_body["systemInstruction"] = serialized_si
+
+        # === Tools (top-level in the REST body) ===
         if hasattr(config, "tools") and config.tools:
             tools_list = []
             for tool in config.tools:
@@ -351,12 +403,18 @@ def _handle_google_genai_gateway_call(
                 request_body["tools"] = tools_list
                 logger.debug(f"[GATEWAY] Including {len(tools_list)} tool(s) in request")
 
-        # Extract tool_config
+        # === Tool Config (top-level in the REST body) ===
         if hasattr(config, "tool_config") and config.tool_config:
             serialized_tc = _serialize_sdk_object(config.tool_config)
             if serialized_tc:
                 request_body["toolConfig"] = serialized_tc
-    
+
+        # === Safety Settings (top-level in the REST body) ===
+        if hasattr(config, "safety_settings") and config.safety_settings:
+            serialized_ss = _serialize_sdk_object(config.safety_settings)
+            if serialized_ss:
+                request_body["safetySettings"] = serialized_ss
+
     # Build the full Vertex AI gateway URL with API path
     # The Vertex AI gateway expects: {base}/v1/projects/{p}/locations/{l}/publishers/google/models/{m}:generateContent
     from ._google_common import build_vertexai_gateway_url
@@ -373,6 +431,14 @@ def _handle_google_genai_gateway_call(
     logger.debug(f"[GATEWAY] Sending native google-genai request to gateway")
     logger.debug(f"[GATEWAY] URL: {full_gateway_url}")
     logger.debug(f"[GATEWAY] Model: {model_name}")
+    logger.debug(f"[GATEWAY] Request body keys: {list(request_body.keys())}")
+    if logger.isEnabledFor(logging.DEBUG):
+        import json as _json
+        try:
+            _body_str = _json.dumps(request_body, default=str)
+            logger.debug(f"[GATEWAY] Full request body ({len(_body_str)} bytes): {_body_str[:5000]}")
+        except Exception as _log_err:
+            logger.debug(f"[GATEWAY] Could not serialize request body for logging: {_log_err}")
     
     try:
         with httpx.Client(timeout=float(gw_settings.timeout)) as client:
@@ -397,7 +463,7 @@ def _handle_google_genai_gateway_call(
         logger.error(f"[GATEWAY] HTTP error: {e}")
         # Log status code and truncated body for debugging (avoid leaking sensitive data)
         try:
-            body_preview = e.response.text[:200] if hasattr(e.response, 'text') else ""
+            body_preview = e.response.text[:1000] if hasattr(e.response, 'text') else ""
             logger.error(f"[GATEWAY] HTTP {e.response.status_code} — body preview: {body_preview}")
         except Exception:
             pass
@@ -584,6 +650,10 @@ class _ContentWrapper:
     @property
     def role(self):
         return self._data.get("role", "model")
+    
+    @role.setter
+    def role(self, value):
+        self._data["role"] = value
     
     @property
     def parts(self):
@@ -871,7 +941,7 @@ def _wrap_generate_content(wrapped, instance, args, kwargs):
             gw_settings=gw_settings,
         )
     
-    # API mode (default): use LLMInspector for inspection
+    # Direct API call (API-mode inspection)
     # Pre-call inspection
     if normalized:
         logger.debug(f"[PATCHED CALL] google-genai.generate_content - Request inspection ({len(normalized)} messages)")
@@ -957,7 +1027,7 @@ async def _wrap_generate_content_async(wrapped, instance, args, kwargs):
             gw_settings=gw_settings,
         )
     
-    # API mode: Pre-call inspection
+    # Direct API call (API-mode inspection)
     if normalized:
         logger.debug(f"[PATCHED CALL] google-genai.async - Request inspection ({len(normalized)} messages)")
         inspector = _get_inspector()

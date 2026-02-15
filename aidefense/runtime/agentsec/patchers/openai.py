@@ -579,8 +579,10 @@ def _handle_gateway_call_sync(kwargs: Dict[str, Any], stream: bool, normalized: 
     gateway_api_key = gw_settings.api_key
     
     # Build request body (OpenAI-compatible format)
+    # Use gateway_model override if configured (e.g. Azure gateway expects specific model)
+    model_name = gw_settings.gateway_model or kwargs.get("model")
     request_body = {
-        "model": kwargs.get("model"),
+        "model": model_name,
         "messages": kwargs.get("messages", []),
     }
     
@@ -602,28 +604,40 @@ def _handle_gateway_call_sync(kwargs: Dict[str, Any], stream: bool, normalized: 
         
         if provider == "azure_openai":
             # Azure OpenAI gateway URL format:
-            # {gateway_base}/openai/deployments/{deployment_name}/chat/completions[?api-version={api_version}]
-            # Use azure_deployment_name (extracted from client) or fall back to kwargs["model"]
-            deployment_name = azure_deployment_name or kwargs.get("model", "")
+            # {base}/openai/deployments/{deployment}/chat/completions?api-version={ver}
+            deployment_name = gw_settings.gateway_model or azure_deployment_name or kwargs.get("model", "")
             if 'chat/completions' not in full_url:
                 full_url = f"{full_url}/openai/deployments/{deployment_name}/chat/completions"
                 if azure_api_version:
                     full_url = f"{full_url}?api-version={azure_api_version}"
         else:
-            # OpenAI gateway URL format: {gateway_base}/v1/chat/completions
+            # OpenAI gateway: {base}/v1/chat/completions
             if 'chat/completions' not in full_url:
                 full_url = full_url + '/v1/chat/completions'
         
+        # Build auth headers based on provider
+        if provider == "azure_openai":
+            # Azure gateway uses api-key header
+            auth_headers = {
+                "api-key": gateway_api_key or "",
+                "Content-Type": "application/json",
+            }
+        else:
+            auth_headers = {
+                "Authorization": f"Bearer {gateway_api_key}",
+                "Content-Type": "application/json",
+            }
+        
         logger.debug(f"[GATEWAY] Sending request to {provider} gateway: {full_url}")
+        logger.debug(f"[GATEWAY] Request body model={request_body.get('model')}, keys={list(request_body.keys())}")
         with httpx.Client(timeout=float(gw_settings.timeout)) as client:
             response = client.post(
                 full_url,
                 json=request_body,
-                headers={
-                    "Authorization": f"Bearer {gateway_api_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=auth_headers,
             )
+            if response.status_code >= 400:
+                logger.error(f"[GATEWAY] {provider} gateway returned {response.status_code}: {response.text[:500]}")
             response.raise_for_status()
             response_data = response.json()
         
@@ -878,8 +892,10 @@ async def _handle_gateway_call_async(kwargs: Dict[str, Any], stream: bool, norma
     gateway_api_key = gw_settings.api_key
     
     # Build request body (OpenAI-compatible format)
+    # Use gateway_model override if configured (e.g. Azure gateway expects specific model)
+    model_name = gw_settings.gateway_model or kwargs.get("model")
     request_body = {
-        "model": kwargs.get("model"),
+        "model": model_name,
         "messages": kwargs.get("messages", []),
     }
     
@@ -901,28 +917,40 @@ async def _handle_gateway_call_async(kwargs: Dict[str, Any], stream: bool, norma
         
         if provider == "azure_openai":
             # Azure OpenAI gateway URL format:
-            # {gateway_base}/openai/deployments/{deployment_name}/chat/completions[?api-version={api_version}]
-            # Use azure_deployment_name (extracted from client) or fall back to kwargs["model"]
-            deployment_name = azure_deployment_name or kwargs.get("model", "")
+            # {base}/openai/deployments/{deployment}/chat/completions?api-version={ver}
+            deployment_name = gw_settings.gateway_model or azure_deployment_name or kwargs.get("model", "")
             if 'chat/completions' not in full_url:
                 full_url = f"{full_url}/openai/deployments/{deployment_name}/chat/completions"
                 if azure_api_version:
                     full_url = f"{full_url}?api-version={azure_api_version}"
         else:
-            # OpenAI gateway URL format: {gateway_base}/v1/chat/completions
+            # OpenAI gateway: {base}/v1/chat/completions
             if 'chat/completions' not in full_url:
                 full_url = full_url + '/v1/chat/completions'
         
+        # Build auth headers based on provider
+        if provider == "azure_openai":
+            # Azure gateway uses api-key header
+            auth_headers = {
+                "api-key": gateway_api_key or "",
+                "Content-Type": "application/json",
+            }
+        else:
+            auth_headers = {
+                "Authorization": f"Bearer {gateway_api_key}",
+                "Content-Type": "application/json",
+            }
+        
         logger.debug(f"[GATEWAY] Sending async request to {provider} gateway: {full_url}")
+        logger.debug(f"[GATEWAY] Request body model={request_body.get('model')}, keys={list(request_body.keys())}")
         async with httpx.AsyncClient(timeout=float(gw_settings.timeout)) as client:
             response = await client.post(
                 full_url,
                 json=request_body,
-                headers={
-                    "Authorization": f"Bearer {gateway_api_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=auth_headers,
             )
+            if response.status_code >= 400:
+                logger.error(f"[GATEWAY] {provider} gateway returned {response.status_code}: {response.text[:500]}")
             response.raise_for_status()
             response_data = response.json()
         

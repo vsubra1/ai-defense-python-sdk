@@ -160,7 +160,8 @@ def _serialize_vertexai_obj(obj: Any) -> Any:
             return obj.model_dump(mode="json", by_alias=True, exclude_none=True)
         except (TypeError, Exception):
             try:
-                return obj.model_dump(exclude_none=True)
+                # Keep by_alias=True so field names stay camelCase
+                return obj.model_dump(by_alias=True, exclude_none=True)
             except Exception:
                 pass
     if hasattr(obj, "dict"):
@@ -281,6 +282,14 @@ def _handle_vertexai_gateway_call(
     logger.debug(f"[GATEWAY] Sending native Vertex AI request to gateway")
     logger.debug(f"[GATEWAY] URL: {full_gateway_url}")
     logger.debug(f"[GATEWAY] Model: {model_name}")
+    logger.debug(f"[GATEWAY] Request body keys: {list(request_body.keys())}")
+    if logger.isEnabledFor(logging.DEBUG):
+        import json as _json
+        try:
+            _body_str = _json.dumps(request_body, default=str)
+            logger.debug(f"[GATEWAY] Full request body ({len(_body_str)} bytes): {_body_str[:5000]}")
+        except Exception as _log_err:
+            logger.debug(f"[GATEWAY] Could not serialize request body for logging: {_log_err}")
     
     try:
         with httpx.Client(timeout=float(gw_settings.timeout)) as client:
@@ -298,18 +307,16 @@ def _handle_vertexai_gateway_call(
         logger.debug(f"[GATEWAY] Received native Vertex AI response from gateway")
         set_inspection_context(decision=Decision.allow(reasons=["Gateway handled inspection"]), done=True)
         
-        # Wrap response for attribute access
-        return _VertexAIResponseWrapper(response_data)
+        # Build a proper GenerationResponse (or wrapper fallback) for attribute access
+        return _build_vertexai_response(response_data)
         
     except httpx.HTTPStatusError as e:
         logger.error(f"[GATEWAY] HTTP error: {e}")
         if gw_settings.fail_open:
-            # fail_open=True: allow request to proceed by re-raising original error
             logger.warning(f"[GATEWAY] fail_open=True, re-raising original HTTP error for caller to handle")
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
-            raise  # Re-raise original HTTP error, not SecurityPolicyError
+            raise
         else:
-            # fail_open=False: block the request with SecurityPolicyError
             raise SecurityPolicyError(
                 Decision.block(reasons=["Gateway unavailable"]),
                 f"Gateway HTTP error: {e}"
@@ -319,8 +326,62 @@ def _handle_vertexai_gateway_call(
         if gw_settings.fail_open:
             logger.warning(f"[GATEWAY] fail_open=True, re-raising original error for caller to handle")
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)
-            raise  # Re-raise original error
+            raise
         raise
+
+
+def _build_vertexai_response(response_data: Dict):
+    """Build a response from gateway JSON data.
+
+    Tries to construct a real ``GenerationResponse`` via ``from_dict()`` so
+    that frameworks performing ``isinstance`` checks (e.g. AG2/autogen) work
+    correctly.  Falls back to the lightweight ``_VertexAIResponseWrapper`` if
+    the Vertex AI SDK is unavailable or the dict cannot be parsed.
+    """
+    try:
+        from vertexai.generative_models import GenerationResponse as _GenResp
+
+        # The gateway may return fields (e.g. usageMetadata.trafficType)
+        # that are newer than the local protobuf schema.  Strip them to
+        # avoid ParseError.
+        clean = _strip_unknown_fields(response_data)
+        resp = _GenResp.from_dict(clean)
+        logger.debug("[GATEWAY] Built native GenerationResponse from gateway data")
+        return resp
+    except Exception as exc:
+        logger.warning(
+            f"[GATEWAY] Could not build native GenerationResponse "
+            f"({type(exc).__name__}: {exc}), using wrapper instead. "
+            f"Response keys: {list(response_data.keys()) if isinstance(response_data, dict) else 'N/A'}"
+        )
+        return _VertexAIResponseWrapper(response_data)
+
+
+# Fields that the gateway may include but the local SDK protobuf doesn't know.
+_USAGE_METADATA_KNOWN_FIELDS = {
+    "promptTokenCount", "candidatesTokenCount", "totalTokenCount",
+    "cachedContentTokenCount", "prompt_token_count", "candidates_token_count",
+    "total_token_count", "cached_content_token_count",
+}
+
+
+def _strip_unknown_fields(data: Dict) -> Dict:
+    """Remove fields from the response dict that are not in the local protobuf schema.
+
+    Only touches ``usageMetadata`` today; extend as needed.
+    """
+    import copy
+    data = copy.deepcopy(data)
+
+    # Clean usageMetadata – keep only known fields
+    um_key = "usageMetadata" if "usageMetadata" in data else "usage_metadata"
+    if um_key in data and isinstance(data[um_key], dict):
+        data[um_key] = {
+            k: v for k, v in data[um_key].items()
+            if k in _USAGE_METADATA_KNOWN_FIELDS
+        }
+
+    return data
 
 
 class _VertexAIResponseWrapper:
@@ -385,6 +446,10 @@ class _ContentWrapper:
     @property
     def role(self):
         return self._data.get("role", "model")
+    
+    @role.setter
+    def role(self, value):
+        self._data["role"] = value
     
     @property
     def parts(self):
@@ -777,10 +842,10 @@ async def _handle_vertexai_gateway_call_async(
             response.raise_for_status()
             response_data = response.json()
         
-        logger.debug(f"[GATEWAY] Received native Vertex AI response from gateway")
+        logger.debug(f"[GATEWAY] Received native Vertex AI response from gateway (async)")
         set_inspection_context(decision=Decision.allow(reasons=["Gateway handled inspection"]), done=True)
         
-        return _VertexAIResponseWrapper(response_data)
+        return _build_vertexai_response(response_data)
         
     except httpx.HTTPStatusError as e:
         logger.error(f"[GATEWAY] HTTP error: {e}")
@@ -899,7 +964,7 @@ def _inspect_vertexai_sync(wrapped, instance, args, kwargs, entry="generate_cont
                 system_instruction=getattr(instance, "system_instruction", None),
             )
     
-    # API mode (default): use LLMInspector for inspection
+    # Direct API call (API-mode inspection)
     # Pre-call inspection
     if normalized:
         logger.debug(f"[PATCHED CALL] VertexAI.{entry} - Request inspection ({len(normalized)} messages)")
@@ -1021,7 +1086,7 @@ async def _inspect_vertexai_async(wrapped, instance, args, kwargs, entry="genera
                 system_instruction=getattr(instance, "system_instruction", None),
             )
     
-    # API mode (default): use LLMInspector for inspection
+    # Direct API call (API-mode inspection)
     # Pre-call inspection
     if normalized:
         logger.debug(f"[PATCHED CALL] VertexAI.{entry} - Request inspection ({len(normalized)} messages)")

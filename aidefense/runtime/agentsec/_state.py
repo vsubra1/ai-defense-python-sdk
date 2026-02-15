@@ -371,6 +371,7 @@ def resolve_llm_gateway_settings(
         gcp_location=raw_config.get("gcp_location"),
         gcp_service_account_key_file=raw_config.get("gcp_service_account_key_file"),
         gcp_target_service_account=raw_config.get("gcp_target_service_account"),
+        gateway_model=raw_config.get("gateway_model"),
     )
 
 

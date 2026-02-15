@@ -214,6 +214,7 @@ class TestOpenAIPatcherGatewayMode:
         
         # Mock httpx Client
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "id": "gateway-123",
             "choices": [{"message": {"role": "assistant", "content": "Gateway response"}}],
@@ -281,6 +282,7 @@ class TestOpenAIPatcherAsyncGatewayMode:
         
         # Mock httpx AsyncClient
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = {
             "id": "async-gateway-123",
             "choices": [{"message": {"role": "assistant", "content": "Async gateway response"}}],
