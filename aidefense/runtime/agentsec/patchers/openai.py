@@ -249,9 +249,12 @@ def _should_inspect() -> bool:
     from .._context import is_llm_skip_active
     if is_llm_skip_active():
         return False
-    mode = _state.get_llm_mode()
-    if mode == "off":
-        return False
+    if _state.get_llm_integration_mode() == "gateway":
+        if _state.get_gw_llm_mode() == "off":
+            return False
+    else:
+        if _state.get_llm_mode() == "off":
+            return False
     ctx = get_inspection_context()
     return not ctx.done
 

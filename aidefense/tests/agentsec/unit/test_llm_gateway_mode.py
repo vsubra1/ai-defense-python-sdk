@@ -265,6 +265,39 @@ class TestOpenAIPatcherGatewayMode:
         # Original function should never be called
         assert not wrapped.called
 
+    def test_gateway_mode_off_calls_original(self):
+        """When gateway llm_mode is 'off', calls go directly to the original."""
+        set_state(
+            initialized=True,
+            llm_integration_mode="gateway",
+            gateway_mode={
+                "llm_mode": "off",
+                "llm_gateways": {
+                    "openai-1": {
+                        "gateway_url": "https://gateway.example.com/openai",
+                        "gateway_api_key": "test-key",
+                        "provider": "openai",
+                        "default": True,
+                    },
+                },
+            },
+        )
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "Direct response"
+
+        wrapped = MagicMock(return_value=mock_response)
+
+        result = openai_patcher._wrap_chat_completions_create(
+            wrapped, None, [],
+            {"model": "gpt-4", "messages": [{"role": "user", "content": "Hi"}]}
+        )
+
+        # Original wrapped function SHOULD be called (gateway is off)
+        assert wrapped.called
+        assert result == mock_response
+
 
 class TestOpenAIPatcherAsyncGatewayMode:
     """Test async OpenAI patcher with gateway mode."""

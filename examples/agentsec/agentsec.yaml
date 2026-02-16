@@ -20,6 +20,12 @@ mcp_integration_mode: gateway       # gateway | api
 # -- Gateway mode configuration ----------------------------------------------
 # Used when llm_integration_mode or mcp_integration_mode is "gateway".
 gateway_mode:
+  # Gateway on/off switches: "on" routes through the gateway, "off" disables.
+  # Enforcement is handled server-side by the Cisco AI Defense Gateway.
+  # NOTE: Values MUST be quoted — bare on/off are YAML booleans (True/False).
+  llm_mode: "on"                    # "on" | "off" (default: "on")
+  mcp_mode: "on"                    # "on" | "off" (default: "on")
+
   # LLM defaults: inherited by all LLM gateways unless overridden
   llm_defaults:
     fail_open: true

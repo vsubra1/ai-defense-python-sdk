@@ -69,7 +69,35 @@ def load_config_file(path: str) -> dict:
                 key, path, ", ".join(sorted(_KNOWN_TOP_KEYS)),
             )
 
-    return _resolve_env_vars(raw)
+    resolved = _resolve_env_vars(raw)
+    _normalize_yaml_booleans(resolved)
+    return resolved
+
+
+# YAML parses bare on/off/yes/no as booleans.  Map them back to the
+# string values that the rest of the codebase expects.
+_YAML_BOOL_TO_STR = {True: "on", False: "off"}
+
+
+def _normalize_yaml_booleans(cfg: dict) -> None:
+    """Normalize YAML boolean values back to string equivalents.
+
+    YAML spec treats bare ``on`` / ``off`` / ``yes`` / ``no`` as booleans.
+    Fields like ``gateway_mode.llm_mode`` and ``gateway_mode.mcp_mode``
+    expect string ``"on"`` / ``"off"``, so we convert them here rather
+    than forcing every user to quote their YAML values.
+    """
+    gw = cfg.get("gateway_mode")
+    if isinstance(gw, dict):
+        for key in ("llm_mode", "mcp_mode"):
+            val = gw.get(key)
+            if isinstance(val, bool):
+                gw[key] = _YAML_BOOL_TO_STR[val]
+                logger.debug(
+                    "Normalized gateway_mode.%s from YAML boolean %r to '%s' "
+                    "(quote the value in YAML to silence this)",
+                    key, val, gw[key],
+                )
 
 
 def _resolve_env_vars(value: Any) -> Any:

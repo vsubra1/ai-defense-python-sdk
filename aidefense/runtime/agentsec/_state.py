@@ -20,9 +20,14 @@ SUPPORTED_PROVIDERS = [
 
 # Valid configuration values — import canonical definitions from config.py
 # to avoid duplicate definitions that could drift.
-from .config import VALID_MODES as _VALID_MODES_TUPLE, VALID_INTEGRATION_MODES as _VALID_INTEGRATION_MODES_TUPLE
+from .config import (
+    VALID_MODES as _VALID_MODES_TUPLE,
+    VALID_GATEWAY_MODES as _VALID_GATEWAY_MODES_TUPLE,
+    VALID_INTEGRATION_MODES as _VALID_INTEGRATION_MODES_TUPLE,
+)
 
 VALID_API_MODES = set(_VALID_MODES_TUPLE)
+VALID_GATEWAY_MODES = set(_VALID_GATEWAY_MODES_TUPLE)
 VALID_INTEGRATION_MODES = set(_VALID_INTEGRATION_MODES_TUPLE)
 VALID_AUTH_MODES = {"none", "api_key", "aws_sigv4", "google_adc", "oauth2_client_credentials"}
 VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
@@ -65,6 +70,13 @@ _api_mode_llm_endpoint: Optional[str] = None
 _api_mode_llm_api_key: Optional[str] = None
 _api_mode_mcp_endpoint: Optional[str] = None
 _api_mode_mcp_api_key: Optional[str] = None
+
+# ---------------------------------------------------------------------------
+# Gateway mode: on/off switches (from gateway_mode.llm_mode / mcp_mode)
+# ---------------------------------------------------------------------------
+
+_gw_llm_mode: str = "on"   # on/off
+_gw_mcp_mode: str = "on"   # on/off
 
 # ---------------------------------------------------------------------------
 # Gateway mode defaults (from gateway_mode.llm_defaults / mcp_defaults)
@@ -175,6 +187,17 @@ def get_llm_integration_mode() -> str:
 def get_mcp_integration_mode() -> str:
     """Get the current MCP integration mode ('api' or 'gateway')."""
     return _mcp_integration_mode
+
+
+# Gateway mode on/off getters
+def get_gw_llm_mode() -> str:
+    """Get the current gateway LLM mode ('on' or 'off')."""
+    return _gw_llm_mode
+
+
+def get_gw_mcp_mode() -> str:
+    """Get the current gateway MCP mode ('on' or 'off')."""
+    return _gw_mcp_mode
 
 
 # API mode getters (mode strings, endpoints, keys)
@@ -700,6 +723,29 @@ def set_state(
 
     # Unpack gateway_mode dict
     gw = gateway_mode or {}
+    gw_llm_mode_val = gw.get("llm_mode", "on")
+    gw_mcp_mode_val = gw.get("mcp_mode", "on")
+
+    # Normalise YAML boolean → string.
+    # PyYAML (YAML 1.1) parses "on"/"off"/"yes"/"no" as Python booleans.
+    # Map True → "on", False → "off" so users can write `llm_mode: on`
+    # without quoting.
+    _BOOL_TO_GW_MODE = {True: "on", False: "off"}
+    if isinstance(gw_llm_mode_val, bool):
+        gw_llm_mode_val = _BOOL_TO_GW_MODE[gw_llm_mode_val]
+    if isinstance(gw_mcp_mode_val, bool):
+        gw_mcp_mode_val = _BOOL_TO_GW_MODE[gw_mcp_mode_val]
+
+    if gw_llm_mode_val not in VALID_GATEWAY_MODES:
+        raise ConfigurationError(
+            f"Invalid gateway_mode.llm_mode: '{gw_llm_mode_val}'. "
+            f"Must be one of: {', '.join(sorted(VALID_GATEWAY_MODES))}"
+        )
+    if gw_mcp_mode_val not in VALID_GATEWAY_MODES:
+        raise ConfigurationError(
+            f"Invalid gateway_mode.mcp_mode: '{gw_mcp_mode_val}'. "
+            f"Must be one of: {', '.join(sorted(VALID_GATEWAY_MODES))}"
+        )
     gw_llm_defs = _unpack_defaults(gw.get("llm_defaults"), prefix="gateway_mode.llm_defaults")
     gw_mcp_defs = _unpack_defaults(gw.get("mcp_defaults"), prefix="gateway_mode.mcp_defaults")
     _validate_defaults("gateway_mode.llm_defaults", gw_llm_defs)
@@ -753,7 +799,8 @@ def set_state(
     global _metadata_user, _metadata_src_app, _metadata_client_transaction_id
     global _pool_max_connections, _pool_max_keepalive
     global _log_file, _log_format, _custom_logger
-    # Gateway mode defaults
+    # Gateway mode on/off and defaults
+    global _gw_llm_mode, _gw_mcp_mode
     global _gw_llm_fail_open, _gw_llm_timeout
     global _gw_llm_retry_total, _gw_llm_retry_backoff, _gw_llm_retry_status_codes
     global _gw_mcp_fail_open, _gw_mcp_timeout
@@ -793,6 +840,10 @@ def set_state(
         _log_file = log_file
         _log_format = log_format
         _custom_logger = custom_logger
+
+        # Gateway mode: on/off switches
+        _gw_llm_mode = gw_llm_mode_val
+        _gw_mcp_mode = gw_mcp_mode_val
 
         # Gateway mode: LLM defaults
         _gw_llm_fail_open = gw_llm_defs.get("fail_open", True)
@@ -851,6 +902,7 @@ def reset() -> None:
     global _metadata_user, _metadata_src_app, _metadata_client_transaction_id
     global _pool_max_connections, _pool_max_keepalive
     global _log_file, _log_format, _custom_logger
+    global _gw_llm_mode, _gw_mcp_mode
     global _gw_llm_fail_open, _gw_llm_timeout
     global _gw_llm_retry_total, _gw_llm_retry_backoff, _gw_llm_retry_status_codes
     global _gw_mcp_fail_open, _gw_mcp_timeout
@@ -881,6 +933,10 @@ def reset() -> None:
         _log_file = None
         _log_format = None
         _custom_logger = None
+
+        # Gateway mode on/off
+        _gw_llm_mode = "on"
+        _gw_mcp_mode = "on"
 
         # Gateway mode defaults
         _gw_llm_fail_open = True

@@ -276,3 +276,31 @@ class TestProtect:
         )
         assert get_gw_llm_fail_open() is False
         assert get_gw_mcp_fail_open() is False
+
+    def test_protect_gateway_mode_on_off(self):
+        """Test protect() with gateway mode on/off switches."""
+        protect(
+            llm_integration_mode="gateway",
+            mcp_integration_mode="gateway",
+            gateway_mode={
+                "llm_mode": "off",
+                "mcp_mode": "off",
+            },
+        )
+
+        from aidefense.runtime.agentsec._state import (
+            get_gw_llm_mode,
+            get_gw_mcp_mode,
+        )
+        assert get_gw_llm_mode() == "off"
+        assert get_gw_mcp_mode() == "off"
+
+    def test_protect_gateway_mode_default_on(self):
+        """Test protect() gateway mode defaults to 'on'."""
+        protect(
+            llm_integration_mode="gateway",
+            gateway_mode={},
+        )
+
+        from aidefense.runtime.agentsec._state import get_gw_llm_mode
+        assert get_gw_llm_mode() == "on"

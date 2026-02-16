@@ -8,5 +8,8 @@ AGENTSEC_* environment variable parsing have been removed.
 # Valid mode values for API mode
 VALID_MODES = ("off", "monitor", "enforce")
 
+# Valid mode values for Gateway mode
+VALID_GATEWAY_MODES = ("on", "off")
+
 # Valid integration mode values (api vs gateway)
 VALID_INTEGRATION_MODES = ("api", "gateway")

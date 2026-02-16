@@ -93,9 +93,11 @@ def _get_inspector() -> Union[MCPInspector, MCPGatewayInspector]:
 
 
 def _should_use_gateway() -> bool:
-    """Check if we should use gateway mode for MCP (not skipped)."""
+    """Check if we should use gateway mode for MCP (not skipped, not off)."""
     from .._context import is_mcp_skip_active
     if _state.get_mcp_integration_mode() != "gateway":
+        return False
+    if _state.get_gw_mcp_mode() == "off":
         return False
     if is_mcp_skip_active():
         return False

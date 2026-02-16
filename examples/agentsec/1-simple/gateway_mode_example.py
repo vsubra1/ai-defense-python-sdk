@@ -332,6 +332,8 @@ def main():
     print("  mcp_defaults.fail_open: Whether to allow calls if inspection fails")
     print()
     print("Gateway Mode (gateway_mode dict):")
+    print("  llm_mode              : 'on' (default) or 'off' — enable/disable LLM gateway inspection")
+    print("  mcp_mode              : 'on' (default) or 'off' — enable/disable MCP gateway inspection")
     print("  llm_gateways          : dict of named LLM gateways {name: {gateway_url, gateway_api_key, provider, default}}")
     print("  mcp_gateways          : dict of MCP gateway configs {mcp_server_url: {gateway_url, auth_mode, ...}}")
     print("    auth_mode           : 'none' (default), 'api_key', or 'oauth2_client_credentials'")

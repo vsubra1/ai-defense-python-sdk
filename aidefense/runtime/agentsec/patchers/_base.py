@@ -85,6 +85,10 @@ def resolve_gateway_settings(provider: str) -> Optional[GatewaySettings]:
     if _state.get_llm_integration_mode() != "gateway":
         return None
 
+    # Gate: gateway mode must be "on"
+    if _state.get_gw_llm_mode() == "off":
+        return None
+
     # Respect skip_inspection context
     if is_llm_skip_active():
         return None

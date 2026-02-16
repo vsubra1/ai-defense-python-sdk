@@ -179,6 +179,41 @@ class TestSetStateWithGatewayMode:
         # Other defaults should still be at hardcoded values
         assert _state._gw_mcp_fail_open is True
 
+    def test_gw_llm_mode_default_on(self):
+        """Gateway LLM mode defaults to 'on' when not specified."""
+        _state.set_state(initialized=True, gateway_mode={})
+        assert _state.get_gw_llm_mode() == "on"
+
+    def test_gw_mcp_mode_default_on(self):
+        """Gateway MCP mode defaults to 'on' when not specified."""
+        _state.set_state(initialized=True, gateway_mode={})
+        assert _state.get_gw_mcp_mode() == "on"
+
+    def test_gw_llm_mode_off(self):
+        """Gateway LLM mode can be set to 'off'."""
+        _state.set_state(initialized=True, gateway_mode={"llm_mode": "off"})
+        assert _state.get_gw_llm_mode() == "off"
+
+    def test_gw_mcp_mode_off(self):
+        """Gateway MCP mode can be set to 'off'."""
+        _state.set_state(initialized=True, gateway_mode={"mcp_mode": "off"})
+        assert _state.get_gw_mcp_mode() == "off"
+
+    def test_gw_mode_invalid_raises(self):
+        """Invalid gateway mode raises ConfigurationError."""
+        import pytest
+        from aidefense.runtime.agentsec.exceptions import ConfigurationError
+        with pytest.raises(ConfigurationError, match="gateway_mode.llm_mode"):
+            _state.set_state(initialized=True, gateway_mode={"llm_mode": "monitor"})
+
+    def test_reset_restores_gw_modes(self):
+        """reset() restores gateway modes to 'on'."""
+        _state.set_state(initialized=True, gateway_mode={"llm_mode": "off", "mcp_mode": "off"})
+        assert _state.get_gw_llm_mode() == "off"
+        _state.reset()
+        assert _state.get_gw_llm_mode() == "on"
+        assert _state.get_gw_mcp_mode() == "on"
+
 
 class TestSetStateWithApiMode:
     """Tests for set_state() with the new api_mode dict."""

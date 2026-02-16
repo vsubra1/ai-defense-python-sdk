@@ -193,7 +193,7 @@ For the complete list of every `.env` variable, every `agentsec.yaml` parameter 
 
 | Category | Description | Examples |
 |----------|-------------|----------|
-| **1-simple/** | Standalone examples for core features | 10 examples |
+| **1-simple/** | Standalone examples for core features | 11 examples |
 | **2-agent-frameworks/** | Agent frameworks with MCP tools | 6 frameworks |
 | **3-agent-runtimes/** | Cloud deployment with AI Defense | 3 runtimes, 9 modes |
 
@@ -258,11 +258,17 @@ agentsec inspects both **requests** (user prompts) and **responses** (LLM output
 
 ### Inspection Modes
 
-| Mode | Behavior | Use Case |
-|------|----------|----------|
-| `off` | No inspection | Disabled |
-| `monitor` | Inspect & log, never block | Testing, observability |
-| `enforce` | Inspect & block violations | Production |
+API mode and Gateway mode have **separate, independent mode controls**. Each mode only applies to its own integration path.
+
+#### API Mode: `off` | `monitor` | `enforce`
+
+When `llm_integration_mode: api`, the SDK sends each request/response to the Cisco AI Defense inspection API, which returns an `allow` or `block` decision. The SDK then acts on that decision locally:
+
+| Mode | Behavior | What Happens on a Violation |
+|------|----------|----------------------------|
+| `off` | No inspection | Calls go directly to the LLM provider |
+| `monitor` | Inspect & log, never block | Decision is logged but the call always proceeds |
+| `enforce` | Inspect & block violations | SDK raises `SecurityPolicyError`, preventing the request or response from reaching the app |
 
 Set in `agentsec.yaml`:
 ```yaml
@@ -270,10 +276,38 @@ api_mode:
   llm:
     mode: enforce    # off | monitor | enforce
   mcp:
-    mode: monitor
+    mode: monitor    # off | monitor | enforce
 ```
 
-> **Custom rules**: You can restrict which inspection rules are evaluated by
+In `enforce` mode, catch `SecurityPolicyError` to handle blocked requests:
+```python
+from aidefense.runtime.agentsec.exceptions import SecurityPolicyError
+
+try:
+    response = client.chat.completions.create(...)
+except SecurityPolicyError as e:
+    print(f"Blocked: {e}")
+```
+
+#### Gateway Mode: `on` | `off`
+
+When `llm_integration_mode: gateway`, the SDK routes all traffic through the Cisco AI Defense Gateway proxy. **Enforcement is handled server-side by the gateway** -- the SDK does not make local allow/block decisions. Policies are configured in the Cisco AI Defense portal.
+
+| Mode | Behavior |
+|------|----------|
+| `on` | Traffic is routed through the gateway (default) |
+| `off` | Gateway is bypassed; calls go directly to the LLM provider with no inspection |
+
+Set in `agentsec.yaml`:
+```yaml
+gateway_mode:
+  llm_mode: on     # on | off
+  mcp_mode: on     # on | off
+```
+
+> **Key difference**: In API mode, `monitor` vs `enforce` controls whether the SDK blocks violations locally. In Gateway mode, there is no local enforcement -- the gateway decides whether to allow or block, so the only SDK-side choice is whether to route through the gateway (`on`) or bypass it (`off`).
+
+> **Custom rules** (API mode only): You can restrict which inspection rules are evaluated by
 > specifying `api_mode.llm.rules` in `agentsec.yaml` or via `protect()` kwargs.
 > When omitted, all rules are evaluated. When specified, only the listed rules
 > run. This is useful for reducing false positives (e.g., excluding Prompt
@@ -757,19 +791,13 @@ Three deployment modes for GCP Vertex AI agents:
 | **Cloud Run** | Serverless containers | GCP ADC credentials | Docker, Cloud Run permissions |
 | **GKE** | Kubernetes deployment | GCP ADC credentials | Docker, kubectl, GKE permissions |
 
-**Supported Google AI SDKs:**
+**Google AI SDK:**
 
-| SDK | Package | Status | Environment Variable |
-|-----|---------|--------|----------------------|
-| **vertexai** | `google-cloud-aiplatform` | Legacy (default) | `GOOGLE_AI_SDK=vertexai` |
-| **google-genai** | `google-genai` | Modern (recommended) | `GOOGLE_AI_SDK=google_genai` |
+The GCP Vertex AI runtime uses `ChatGoogleGenerativeAI` from the `langchain-google-genai` package (which uses the modern `google-genai` SDK internally). This SDK is intercepted by the agentsec `google_genai` patcher. The older `ChatVertexAI` class (from `langchain-google-vertexai`) uses a GAPIC client that cannot be patched and is **not supported**.
 
 ```bash
 cd 3-agent-runtimes/gcp-vertex-ai-agent-engine
 poetry install
-
-# Choose SDK (optional, defaults to vertexai)
-export GOOGLE_AI_SDK=google_genai  # Use modern SDK
 
 # Run LOCAL tests (default) - no GCP deployment needed
 ./tests/integration/test-all-modes.sh              # All modes, local
@@ -894,20 +922,13 @@ For quick testing or when YAML is not practical, configuration can be provided i
 from aidefense.runtime import agentsec
 import os
 
-# Inline configuration (for quick testing only — prefer agentsec.yaml for production)
+# Example 1: Full gateway mode (LLM + MCP via gateway)
 agentsec.protect(
     llm_integration_mode="gateway",
-    api_mode={
-        "llm": {
-            "mode": "enforce",
-            "endpoint": "https://preview.api.inspect.aidefense.aiteam.cisco.com/api",
-            "api_key": os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
-        },
-        "mcp": {"mode": "monitor"},
-        "llm_defaults": {"fail_open": True, "timeout": 5},
-        "mcp_defaults": {"fail_open": True},
-    },
+    mcp_integration_mode="gateway",
     gateway_mode={
+        "llm_mode": "on",   # "on" (default) or "off" — enforcement is server-side
+        "mcp_mode": "on",   # "on" (default) or "off"
         "llm_gateways": {
             "openai-1": {
                 "gateway_url": "https://gateway.../openai-conn",
@@ -926,6 +947,32 @@ agentsec.protect(
     },
     pool_max_connections=20,
     pool_max_keepalive=10,
+)
+
+# Example 2: Mixed mode — LLM via gateway, MCP via API
+agentsec.protect(
+    llm_integration_mode="gateway",
+    mcp_integration_mode="api",
+    gateway_mode={
+        "llm_gateways": {
+            "openai-1": {
+                "gateway_url": "https://gateway.../openai-conn",
+                "gateway_api_key": os.getenv("OPENAI_API_KEY"),
+                "auth_mode": "api_key",
+                "provider": "openai",
+                "default": True,
+            },
+        },
+    },
+    api_mode={
+        # api_mode settings apply only when the integration mode is "api"
+        "mcp": {
+            "mode": "enforce",
+            "endpoint": "https://preview.api.inspect.aidefense.aiteam.cisco.com/api",
+            "api_key": os.getenv("AI_DEFENSE_API_MODE_LLM_API_KEY"),
+        },
+        "mcp_defaults": {"fail_open": True},
+    },
 )
 ```
 
@@ -1035,7 +1082,7 @@ For the full `protect()` signature with all parameters, types, defaults, and des
 |----------|-----------|:----------:|-------------------|
 | **Core SDK** | Unit | ~750 | Patching, inspection, decisions, config |
 | **Simple Examples** | Unit | ~95 | Example file structure, syntax |
-| **Simple Examples** | Integration | 20 | 10 examples x 2 modes (API + Gateway) |
+| **Simple Examples** | Integration | 22 | 11 examples x 2 modes (API + Gateway) |
 | **Agent Frameworks** | Unit | ~210 | Agent setup, provider configs |
 | **Agent Frameworks** | Integration | ~40 | 6 frameworks x (2-4 providers) x 2 modes* |
 | **AgentCore** | Unit | ~65 | Deploy scripts, protection setup |
@@ -1097,6 +1144,7 @@ cd /path/to/ai-defense-python-sdk
 | No inspection happening | Ensure `agentsec.protect()` is called BEFORE importing LLM clients |
 | MCP tool calls not inspected | Ensure `mcp` package is installed and `api_mode.mcp.mode` is set in `agentsec.yaml` |
 | Poetry version error | Remove `package-mode = false` from pyproject.toml if using older Poetry |
+| Vertex AI gateway 400 `Invalid JSON payload` | Known AI Defense gateway limitation: request bodies larger than ~2700 bytes are corrupted during forwarding. Use `llm_integration_mode: api` for Vertex AI / google-genai until the gateway team resolves this. |
 
 ### Debug Logging
 

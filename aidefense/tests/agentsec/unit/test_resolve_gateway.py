@@ -27,6 +27,25 @@ class TestResolveGatewaySettings:
         )
         assert resolve_gateway_settings("openai") is None
 
+    def test_returns_none_when_gateway_mode_off(self):
+        """When gateway mode is active but llm_mode is 'off', resolver returns None."""
+        _state.set_state(
+            initialized=True,
+            llm_integration_mode="gateway",
+            gateway_mode={
+                "llm_mode": "off",
+                "llm_gateways": {
+                    "openai-1": {
+                        "gateway_url": "https://gw/openai",
+                        "gateway_api_key": "k",
+                        "provider": "openai",
+                        "default": True,
+                    },
+                },
+            },
+        )
+        assert resolve_gateway_settings("openai") is None
+
     def test_raises_when_no_provider_config(self):
         """When gateway mode but no provider configured, raises SecurityPolicyError."""
         _state.set_state(

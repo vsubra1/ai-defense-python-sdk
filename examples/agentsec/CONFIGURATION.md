@@ -75,6 +75,15 @@ If a referenced variable is not set, a `ConfigurationError` is raised.
 
 Used when `llm_integration_mode` or `mcp_integration_mode` is `"gateway"`.
 
+#### `gateway_mode.llm_mode` / `gateway_mode.mcp_mode`
+
+On/off switches for gateway inspection. When `"on"` (default), traffic is routed through the AI Defense Gateway. When `"off"`, the gateway is bypassed and calls go directly to the LLM/MCP provider with no inspection. Enforcement is handled server-side by the gateway -- there is no local monitor/enforce distinction.
+
+| Key | Type | Allowed Values | Default | Description |
+| --- | --- | --- | --- | --- |
+| `llm_mode` | string | `"on"`, `"off"` | `"on"` | Controls whether LLM calls are routed through the gateway. |
+| `mcp_mode` | string | `"on"`, `"off"` | `"on"` | Controls whether MCP tool calls are routed through the gateway. |
+
 #### `gateway_mode.llm_defaults`
 
 Default settings inherited by **all** LLM gateways unless overridden per-gateway.
@@ -201,7 +210,7 @@ Configuration for LLM inspection via the API.
 
 | Key | Type | Allowed Values | Default | Description |
 | --- | --- | --- | --- | --- |
-| `mode` | string | `"off"`, `"monitor"`, `"enforce"` | *(none -- must be set if using API mode)* | Inspection mode. `"off"` disables inspection. `"monitor"` inspects but never blocks. `"enforce"` inspects and blocks policy violations. |
+| `mode` | string | `"off"`, `"monitor"`, `"enforce"` | *(none -- must be set if using API mode)* | Inspection mode (applies only when `llm_integration_mode: api`). `"off"` disables inspection. `"monitor"` inspects but never blocks. `"enforce"` inspects and raises `SecurityPolicyError` on policy violations. For gateway mode, use `gateway_mode.llm_mode` instead. |
 | `endpoint` | string | URL | *(none)* | AI Defense inspection API URL. |
 | `api_key` | string | | *(none)* | API key for the inspection API. Typically a `${VAR}` reference. |
 | `rules` | list | See [Custom Inspection Rules](#custom-inspection-rules) | `null` (all rules) | List of inspection rules to evaluate. When omitted, **all** rules are evaluated (server default). When specified, **only** the listed rules are evaluated. See [Custom Inspection Rules](#custom-inspection-rules) for formats and supported rule names. |
@@ -283,7 +292,7 @@ Configuration for MCP inspection via the API.
 
 | Key | Type | Allowed Values | Default | Description |
 | --- | --- | --- | --- | --- |
-| `mode` | string | `"off"`, `"monitor"`, `"enforce"` | *(none -- must be set if using API mode)* | Inspection mode. Same semantics as `api_mode.llm.mode`. |
+| `mode` | string | `"off"`, `"monitor"`, `"enforce"` | *(none -- must be set if using API mode)* | Inspection mode (applies only when `mcp_integration_mode: api`). Same semantics as `api_mode.llm.mode`. For gateway mode, use `gateway_mode.mcp_mode` instead. |
 | `endpoint` | string | URL | *(none -- falls back to `api_mode.llm.endpoint` if not set)* | AI Defense inspection API URL for MCP. |
 | `api_key` | string | | *(none -- falls back to `api_mode.llm.api_key` if not set)* | API key for MCP inspection. |
 
@@ -373,7 +382,7 @@ Used for authenticating to Vertex AI and deploying to Agent Engine / Cloud Run /
 | --- | --- | --- | --- |
 | `GOOGLE_CLOUD_PROJECT` | GCP project ID | `your-gcp-project-id` | Deploy scripts / examples |
 | `GOOGLE_CLOUD_LOCATION` | GCP region | `us-central1` | Deploy scripts / examples |
-| `GOOGLE_AI_SDK` | Google AI SDK to use | `vertexai` | Examples |
+| `GOOGLE_AI_SDK` | Google AI SDK identifier (informational -- the runtime always uses `ChatGoogleGenerativeAI` / `google-genai`) | `google_genai` | Logging / deploy scripts |
 | `GKE_AUTHORIZED_NETWORKS` | GKE authorized networks (CIDR) | `YOUR_PUBLIC_IP/32` | GKE deployment only |
 
 ### GCP Vertex AI Per-Gateway

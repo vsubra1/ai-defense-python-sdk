@@ -246,6 +246,31 @@ class TestMCPGatewayURLRedirection:
         call_args = mock_wrapped.call_args
         assert call_args[0][0] == original_url
 
+    def test_wrap_streamablehttp_client_passes_through_when_gateway_off(self):
+        """Test streamablehttp_client passes through when gateway mcp_mode is 'off'."""
+        set_state(
+            initialized=True,
+            mcp_integration_mode="gateway",
+            gateway_mode={
+                "mcp_mode": "off",
+                "mcp_gateways": {
+                    "https://original-server.com/mcp": {
+                        "gateway_url": "https://gateway.example.com/mcp",
+                        "gateway_api_key": "test-key",
+                    },
+                },
+            },
+        )
+        mock_wrapped = MagicMock(return_value="mock_transport")
+        original_url = "https://original-server.com/mcp"
+        result = mcp_patcher._wrap_streamablehttp_client(
+            mock_wrapped, None,
+            (original_url,),
+            {}
+        )
+        call_args = mock_wrapped.call_args
+        assert call_args[0][0] == original_url
+
     def test_wrap_streamablehttp_client_auth_mode_none_no_headers(self):
         """Test auth_mode='none' injects no auth headers."""
         set_state(

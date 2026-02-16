@@ -23,7 +23,7 @@
 #   4. No errors occur during execution
 #
 # Usage:
-#   ./tests/integration/test-all-modes.sh                    # Run local tests
+#   ./tests/integration/test-all-modes.sh                    # Run local tests (default)
 #   ./tests/integration/test-all-modes.sh --deploy           # Deploy and test in Azure
 #   ./tests/integration/test-all-modes.sh --verbose          # Verbose output
 #   ./tests/integration/test-all-modes.sh --api              # API mode only
@@ -67,7 +67,7 @@ fi
 ALL_DEPLOY_MODES=("agent-app" "azure-functions" "container")
 ALL_INTEGRATION_MODES=("api" "gateway")
 RUN_MCP_TESTS=true
-LOCAL_ONLY=false  # Default to DEPLOY mode (deploy to Azure and test real endpoints)
+LOCAL_ONLY=true   # Default to LOCAL mode (consistent with AgentCore/GCP; use --deploy for Azure)
 FORCE_DEPLOY=false  # When true, force redeployment even if already deployed
 RECREATE_DEPLOY=false  # When true, delete and recreate deployments (clean deploy)
 
@@ -132,26 +132,26 @@ show_help() {
     echo "  container        Test Container deployment"
     echo ""
     echo "Test Modes:"
-    echo "  Default (no flag): Deploys to Azure and tests real endpoints"
+    echo "  Default (no flag): Tests agent LOCALLY using Azure OpenAI credentials"
+    echo "                     Requires: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY"
+    echo ""
+    echo "  With --deploy:     Deploys to Azure and tests real endpoints"
     echo "                     Requires: AZURE_SUBSCRIPTION_ID, AZURE_RESOURCE_GROUP,"
     echo "                               AZURE_AI_FOUNDRY_PROJECT, etc."
-    echo ""
-    echo "  With --local:      Tests agent LOCALLY using Azure OpenAI credentials"
-    echo "                     Requires: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY"
     echo ""
     echo "MCP Test Modes:"
     echo "  --mcp-only       Direct MCP test: directly invokes MCP tool (fast)"
     echo "  --mcp-agent      Agent-prompted MCP test: prompts LLM to trigger MCP (full loop)"
     echo ""
     echo "Examples:"
-    echo "  $0                          # Deploy and test in Azure (default)"
-    echo "  $0 --verbose                # Deploy and test with details"
-    echo "  $0 --force-deploy           # Force update existing deployments"
-    echo "  $0 --recreate               # Delete and recreate deployments"
-    echo "  $0 --local                  # Run local tests only"
-    echo "  $0 agent-app                # Deploy and test agent app only"
-    echo "  $0 --api                    # Deploy and test, API mode only"
-    echo "  $0 --local --api            # Local tests, API mode only"
+    echo "  $0                          # Run local tests (default)"
+    echo "  $0 --verbose                # Local tests with details"
+    echo "  $0 --deploy                 # Deploy and test in Azure"
+    echo "  $0 --deploy --force-deploy  # Force update existing deployments"
+    echo "  $0 --deploy --recreate      # Delete and recreate deployments"
+    echo "  $0 --deploy agent-app       # Deploy and test agent app only"
+    echo "  $0 --api                    # Local tests, API mode only"
+    echo "  $0 --deploy --api           # Deploy and test, API mode only"
     echo "  $0 --mcp-agent --verbose    # Test LLM → MCP flow with details"
 }
 
@@ -1132,7 +1132,7 @@ if [ "$LOCAL_ONLY" = "true" ]; then
     log_header "Azure AI Foundry Integration Tests (LOCAL MODE)"
     echo ""
     echo -e "  ${BLUE}LOCAL MODE: Testing agent locally using Azure OpenAI${NC}"
-    echo -e "  ${BLUE}Remove --local flag to deploy and test real Azure endpoints${NC}"
+    echo -e "  ${BLUE}Use --deploy flag to deploy and test real Azure endpoints${NC}"
 else
     log_header "Azure AI Foundry Integration Tests (DEPLOY MODE)"
     echo ""

@@ -116,11 +116,11 @@ def _auto_load_dotenv() -> bool:
 
 
 def _apply_patches(api_mode_llm: Optional[str], api_mode_mcp: Optional[str]) -> None:
-    """Apply client patches based on modes.
+    """Apply client patches based on the effective mode for each integration path.
 
-    Patches are always applied unless the API mode is explicitly "off"
-    AND there's no gateway mode configured. This ensures gateway-mode
-    patchers can intercept calls even when api_mode is None.
+    For each category (LLM / MCP), patching is applied when:
+    - Gateway integration is active AND gateway mode is "on", OR
+    - API integration is active AND api_mode is not "off".
     """
     from .patchers import (
         patch_openai,
@@ -136,8 +136,12 @@ def _apply_patches(api_mode_llm: Optional[str], api_mode_mcp: Optional[str]) -> 
     llm_integration = _state.get_llm_integration_mode()
     mcp_integration = _state.get_mcp_integration_mode()
 
-    # Patch LLM clients if api_mode is not "off" OR gateway mode is active
-    if api_mode_llm != "off" or llm_integration == "gateway":
+    # Determine if LLM patching is needed
+    llm_active = (
+        (llm_integration == "gateway" and _state.get_gw_llm_mode() != "off")
+        or (llm_integration == "api" and api_mode_llm != "off")
+    )
+    if llm_active:
         patch_openai()
         patch_bedrock()
         patch_vertexai()
@@ -146,8 +150,12 @@ def _apply_patches(api_mode_llm: Optional[str], api_mode_mcp: Optional[str]) -> 
         patch_mistral()
         patch_litellm()
 
-    # Patch MCP client if api_mode is not "off" OR gateway mode is active
-    if api_mode_mcp != "off" or mcp_integration == "gateway":
+    # Determine if MCP patching is needed
+    mcp_active = (
+        (mcp_integration == "gateway" and _state.get_gw_mcp_mode() != "off")
+        or (mcp_integration == "api" and api_mode_mcp != "off")
+    )
+    if mcp_active:
         patch_mcp()
 
 
@@ -381,22 +389,26 @@ def _protect_impl(
         patched = get_patched_clients()
 
     # Step 7: Log initialization summary
-    integration_info = ""
-    if final_llm_integration == "gateway" or final_mcp_integration == "gateway":
-        integration_info = (
-            f" | Integration: LLM={final_llm_integration}, "
-            f"MCP={final_mcp_integration}"
-        )
+    gw_llm_mode = final_gateway_mode.get("llm_mode", "on")
+    gw_mcp_mode = final_gateway_mode.get("mcp_mode", "on")
 
-    api_llm_display = api_mode_llm_str or "not configured"
-    api_mcp_display = api_mode_mcp_str or "not configured"
+    # Build display strings per integration path
+    if final_llm_integration == "gateway":
+        llm_display = f"gateway ({gw_llm_mode})"
+    else:
+        llm_display = api_mode_llm_str or "not configured"
+
+    if final_mcp_integration == "gateway":
+        mcp_display = f"gateway ({gw_mcp_mode})"
+    else:
+        mcp_display = api_mode_mcp_str or "not configured"
+
     print(
-        f"[agentsec] LLM: {api_llm_display} | MCP: {api_mcp_display} "
-        f"| Patched: {patched}{integration_info}"
+        f"[agentsec] LLM: {llm_display} | MCP: {mcp_display} "
+        f"| Patched: {patched}"
     )
     logger.info(
-        f"agentsec initialized: api_mode_llm={api_mode_llm_str}, "
-        f"api_mode_mcp={api_mode_mcp_str}, "
+        f"agentsec initialized: llm={llm_display}, mcp={mcp_display}, "
         f"llm_integration={final_llm_integration}, "
         f"mcp_integration={final_mcp_integration}"
     )

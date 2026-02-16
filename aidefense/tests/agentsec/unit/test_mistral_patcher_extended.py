@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 from aidefense.runtime.agentsec.patchers.mistral import (
     _handle_patcher_error,
+    _should_inspect,
     _dict_to_mistral_response,
     _handle_gateway_call_sync,
     _wrap_complete,
@@ -38,6 +39,41 @@ def reset_state():
     reset_registry()
     clear_inspection_context()
     mistral_module._inspector = None
+
+
+# ===========================================================================
+# _should_inspect() — gateway mode tests
+# ===========================================================================
+
+class TestShouldInspectGatewayMode:
+    def test_true_when_gateway_on(self):
+        _state.set_state(
+            initialized=True,
+            llm_integration_mode="gateway",
+            gateway_mode={"llm_mode": "on"},
+        )
+        clear_inspection_context()
+        assert _should_inspect() is True
+
+    def test_false_when_gateway_off(self):
+        _state.set_state(
+            initialized=True,
+            llm_integration_mode="gateway",
+            gateway_mode={"llm_mode": "off"},
+        )
+        clear_inspection_context()
+        assert _should_inspect() is False
+
+    def test_gateway_mode_ignores_api_mode_off(self):
+        """When integration is gateway and gw_llm_mode is on, api_mode off is irrelevant."""
+        _state.set_state(
+            initialized=True,
+            llm_integration_mode="gateway",
+            gateway_mode={"llm_mode": "on"},
+            api_mode={"llm": {"mode": "off"}},
+        )
+        clear_inspection_context()
+        assert _should_inspect() is True
 
 
 # ===========================================================================

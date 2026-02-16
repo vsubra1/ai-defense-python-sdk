@@ -20,6 +20,7 @@ from aidefense.runtime.agentsec.patchers.vertexai import (
     _build_vertexai_response,
     _strip_unknown_fields,
     _handle_vertexai_gateway_call,
+    _should_inspect,
     _VertexAIResponseWrapper,
     _CandidateWrapper,
     _ContentWrapper,
@@ -70,6 +71,41 @@ def reset_state():
     reset_registry()
     clear_inspection_context()
     vertexai_module._inspector = None
+
+
+# ===========================================================================
+# _should_inspect() — gateway mode tests
+# ===========================================================================
+
+class TestShouldInspectGatewayMode:
+    def test_true_when_gateway_on(self):
+        _state.set_state(
+            initialized=True,
+            llm_integration_mode="gateway",
+            gateway_mode={"llm_mode": "on"},
+        )
+        clear_inspection_context()
+        assert _should_inspect() is True
+
+    def test_false_when_gateway_off(self):
+        _state.set_state(
+            initialized=True,
+            llm_integration_mode="gateway",
+            gateway_mode={"llm_mode": "off"},
+        )
+        clear_inspection_context()
+        assert _should_inspect() is False
+
+    def test_gateway_mode_ignores_api_mode_off(self):
+        """When integration is gateway and gw_llm_mode is on, api_mode off is irrelevant."""
+        _state.set_state(
+            initialized=True,
+            llm_integration_mode="gateway",
+            gateway_mode={"llm_mode": "on"},
+            api_mode={"llm": {"mode": "off"}},
+        )
+        clear_inspection_context()
+        assert _should_inspect() is True
 
 
 # ===========================================================================
