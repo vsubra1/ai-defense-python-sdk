@@ -28,6 +28,7 @@ agentsec.protect(config="agentsec.yaml")
 
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Use in Your Own Project](#use-in-your-own-project)
 - [Environment Variables Quick Reference](#environment-variables-quick-reference)
 - [Overview](#overview)
 - [Core Concepts](#core-concepts)
@@ -93,6 +94,58 @@ cd /path/to/ai-defense-python-sdk
 ./scripts/run-unit-tests.sh           # ~1210 unit tests
 ./scripts/run-integration-tests.sh    # Full integration tests
 ```
+
+---
+
+## Use in Your Own Project
+
+To add Cisco AI Defense protection to your own Python application (outside this repo), install the SDK from PyPI:
+
+```bash
+# pip
+pip install cisco-aidefense-sdk
+
+# or poetry
+poetry add cisco-aidefense-sdk
+```
+
+Then add protection to your code. The key rule is: **call `agentsec.protect()` BEFORE importing your LLM client**.
+
+```python
+import os
+
+# 1. Import and activate protection BEFORE importing LLM clients
+from aidefense.runtime import agentsec
+agentsec.protect(
+    api_mode={
+        "llm": {
+            "mode": "monitor",    # "enforce" to block violations, "monitor" to log only
+            "endpoint": os.environ["AI_DEFENSE_API_MODE_LLM_ENDPOINT"],
+            "api_key": os.environ["AI_DEFENSE_API_MODE_LLM_API_KEY"],
+        }
+    }
+)
+
+# 2. Now import your LLM client -- it is automatically patched
+from openai import OpenAI
+client = OpenAI()
+
+# 3. Use it normally -- every call is inspected by Cisco AI Defense
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+```
+
+**Minimum credentials** (set as environment variables or in a `.env` file):
+
+| Variable | Description |
+|----------|-------------|
+| `AI_DEFENSE_API_MODE_LLM_API_KEY` | Your Cisco AI Defense inspection API key |
+| `AI_DEFENSE_API_MODE_LLM_ENDPOINT` | Your Cisco AI Defense inspection API endpoint |
+| `OPENAI_API_KEY` | Your LLM provider key (OpenAI shown here; any [supported provider](#supported-llm-providers) works) |
+
+For production use, move configuration into an `agentsec.yaml` file (see [Configuration](#configuration) and [CONFIGURATION.md](CONFIGURATION.md)) and call `agentsec.protect(config="agentsec.yaml")`.
 
 ---
 
