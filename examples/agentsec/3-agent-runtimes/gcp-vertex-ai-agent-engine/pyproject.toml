@@ -23,7 +23,7 @@ google-genai = ">=1.0.0"
 
 # LangChain for agent framework (similar to Strands in AWS)
 langchain = ">=0.3.0"
-langchain-google-vertexai = ">=2.0.0"
+langchain-google-genai = ">=2.0.0"
 langchain-core = ">=0.3.0"
 
 # Web framework for Cloud Run and GKE

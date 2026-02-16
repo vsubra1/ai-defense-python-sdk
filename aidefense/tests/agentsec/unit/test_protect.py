@@ -92,6 +92,22 @@ class TestProtect:
         from aidefense.runtime.agentsec._state import get_llm_rules
         assert get_llm_rules() == ["jailbreak", "prompt_injection"]
 
+    def test_protect_llm_rules_dict_format(self):
+        """Test protect() accepts dict-format rules (as from YAML parsing)."""
+        protect(
+            api_mode={"llm": {"rules": [
+                {"rule_name": "PII", "entity_types": ["Email Address"]},
+                {"rule_name": "Prompt Injection"},
+            ]}},
+        )
+
+        from aidefense.runtime.agentsec._state import get_llm_rules
+        rules = get_llm_rules()
+        assert len(rules) == 2
+        assert rules[0]["rule_name"] == "PII"
+        assert rules[0]["entity_types"] == ["Email Address"]
+        assert rules[1]["rule_name"] == "Prompt Injection"
+
     def test_protect_fine_grained_modes(self):
         """Test protect() with fine-grained mode control."""
         protect(

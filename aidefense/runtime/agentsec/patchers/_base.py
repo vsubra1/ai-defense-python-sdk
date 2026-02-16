@@ -16,11 +16,8 @@
 
 """Base utilities for patching infrastructure."""
 
-import functools
 import logging
-from typing import Any, Callable, Optional
-
-import wrapt
+from typing import Any, Optional
 
 from .. import _state
 from .._context import get_active_gateway, is_llm_skip_active
@@ -49,97 +46,6 @@ def safe_import(module_name: str) -> Optional[Any]:
     except ImportError:
         logger.debug(f"Module {module_name} not installed, skipping patch")
         return None
-
-
-def apply_patch(
-    module: Any,
-    attr: str,
-    wrapper: Callable,
-) -> bool:
-    """
-    Apply a patch to a module attribute using wrapt.
-    
-    Args:
-        module: The module containing the function to patch
-        attr: The attribute name to patch
-        wrapper: The wrapper function
-        
-    Returns:
-        True if patch was applied, False otherwise
-    """
-    try:
-        wrapt.wrap_function_wrapper(module, attr, wrapper)
-        logger.debug(f"Applied patch to {module.__name__}.{attr}")
-        return True
-    except Exception as e:
-        logger.warning(f"Failed to patch {module.__name__}.{attr}: {e}")
-        return False
-
-
-def create_sync_wrapper(
-    pre_hook: Optional[Callable] = None,
-    post_hook: Optional[Callable] = None,
-) -> Callable:
-    """
-    Create a synchronous wrapper with pre and post hooks.
-    
-    Args:
-        pre_hook: Called before the wrapped function with (args, kwargs)
-        post_hook: Called after with (result, args, kwargs)
-        
-    Returns:
-        A wrapt-compatible wrapper function
-    """
-    @wrapt.decorator
-    def wrapper(wrapped, instance, args, kwargs):
-        if pre_hook:
-            pre_hook(instance, args, kwargs)
-        
-        result = wrapped(*args, **kwargs)
-        
-        if post_hook:
-            result = post_hook(result, instance, args, kwargs)
-        
-        return result
-    
-    return wrapper
-
-
-def create_async_wrapper(
-    pre_hook: Optional[Callable] = None,
-    post_hook: Optional[Callable] = None,
-) -> Callable:
-    """
-    Create an async wrapper with pre and post hooks.
-    
-    Args:
-        pre_hook: Called before the wrapped function (can be async)
-        post_hook: Called after with (result, args, kwargs) (can be async)
-        
-    Returns:
-        A wrapt-compatible async wrapper function
-    """
-    @wrapt.decorator
-    async def wrapper(wrapped, instance, args, kwargs):
-        import asyncio
-        
-        if pre_hook:
-            if asyncio.iscoroutinefunction(pre_hook):
-                await pre_hook(instance, args, kwargs)
-            else:
-                pre_hook(instance, args, kwargs)
-        
-        result = await wrapped(*args, **kwargs)
-        
-        if post_hook:
-            if asyncio.iscoroutinefunction(post_hook):
-                result = await post_hook(result, instance, args, kwargs)
-            else:
-                result = post_hook(result, instance, args, kwargs)
-        
-        return result
-    
-    return wrapper
 
 
 # =========================================================================

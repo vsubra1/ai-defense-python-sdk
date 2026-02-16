@@ -78,19 +78,6 @@ class TestOpenAIPatcherErrorHandling:
                 assert len(chunks) == 2
 
 
-class TestBedrockPatcherErrorHandling:
-    """Test error handling in Bedrock patcher."""
-
-    def test_bedrock_patcher_handles_errors(self):
-        """Test that Bedrock patcher exists and handles errors."""
-        try:
-            from aidefense.runtime.agentsec.patchers import bedrock
-            assert hasattr(bedrock, 'patch_bedrock')
-        except ImportError:
-            pytest.skip("Bedrock patcher not available")
-
-
-
 
 
 

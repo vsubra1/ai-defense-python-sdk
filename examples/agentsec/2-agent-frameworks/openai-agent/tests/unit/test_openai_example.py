@@ -330,8 +330,8 @@ class TestSyntaxAndImports:
 class TestMockedExecution:
     """Tests with mocked dependencies."""
     
-    def test_agent_can_be_instantiated_with_mocks(self):
-        """Test that the agent pattern can be instantiated with mocked OpenAI."""
+    def test_agent_env_vars_configured(self):
+        """Test that agent environment variables can be configured correctly."""
         # This tests the pattern without actually importing the example
         # to avoid side effects from aidefense.runtime.agentsec.protect()
         
@@ -340,7 +340,7 @@ class TestMockedExecution:
             "OPENAI_MODEL": "gpt-4o-mini",
             "AGENTSEC_API_MODE_LLM": "off",
         }):
-            # Just verify the environment is set correctly
+            # Verify the environment is set correctly
             assert os.environ["OPENAI_API_KEY"] == "test-key"
             assert os.environ["AGENTSEC_API_MODE_LLM"] == "off"
 

@@ -247,10 +247,15 @@ def no_inspection(llm: bool = True, mcp: bool = True) -> Callable[[F], F]:
     """
     Decorator to skip AI Defense inspection for all calls within a function.
     
-    Works with both sync and async functions:
+    Can be used with or without parentheses:
     
-    Sync usage:
+    Without parentheses (skips all inspection):
         @no_inspection
+        def my_health_check():
+            return client.chat.completions.create(...)
+    
+    With parentheses (skips all inspection):
+        @no_inspection()
         def my_health_check():
             return client.chat.completions.create(...)
     
@@ -259,7 +264,7 @@ def no_inspection(llm: bool = True, mcp: bool = True) -> Callable[[F], F]:
         async def my_async_health_check():
             return await client.chat.completions.create(...)
     
-    Granular control:
+    Granular control (parentheses required):
         @no_inspection(llm=True, mcp=False)
         def my_function():
             # Skip LLM inspection only
@@ -272,6 +277,13 @@ def no_inspection(llm: bool = True, mcp: bool = True) -> Callable[[F], F]:
     Returns:
         Decorated function that skips inspection
     """
+    # Support @no_inspection without parentheses: when used as a bare
+    # decorator, the first positional argument ``llm`` receives the
+    # decorated function instead of a bool.
+    if callable(llm):
+        func = llm
+        return no_inspection()(func)  # type: ignore[arg-type]
+
     def decorator(func: F) -> F:
         if asyncio.iscoroutinefunction(func):
             @functools.wraps(func)

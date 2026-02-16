@@ -50,21 +50,21 @@ gateway_mode:
   #       response = bedrock_client.invoke_model(...)
   llm_gateways:
     openai-1:
-      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/aea95bfe-ebd1-4ff0-8ab6-6e0d4a7fae45
+      gateway_url: ${OPENAI_1_GATEWAY_URL}
       gateway_api_key: ${OPENAI_API_KEY}
       auth_mode: api_key
       provider: openai
       default: true
 
     azure-openai-1:
-      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/60b6effc-8a07-4b05-89a9-a12c8c3ac6e7
+      gateway_url: ${AZURE_OPENAI_1_GATEWAY_URL}
       gateway_api_key: ${AZURE_OPENAI_API_KEY}
       auth_mode: api_key
       provider: azure_openai
       default: true
 
     vertexai-1:
-      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/1232becf-681c-4120-90ad-9feea8ae9f27
+      gateway_url: ${VERTEXAI_1_GATEWAY_URL}
       auth_mode: google_adc         # uses Google ADC, no api_key needed
       provider: vertexai
       default: true
@@ -79,7 +79,7 @@ gateway_mode:
       # gcp_target_service_account: my-sa@project.iam.gserviceaccount.com
 
     bedrock-1:
-      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/3a1f81d9-0f02-4faa-84db-3f07bbd8024c
+      gateway_url: ${BEDROCK_1_GATEWAY_URL}
       auth_mode: aws_sigv4          # uses IAM credentials, no api_key needed
       provider: bedrock
       default: true
@@ -95,14 +95,14 @@ gateway_mode:
       # aws_role_arn: arn:aws:iam::123456789012:role/bedrock-role
 
     cohere-1:
-      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/b7db955e-c85f-4d24-a8eb-7821ee1badff
+      gateway_url: ${COHERE_1_GATEWAY_URL}
       gateway_api_key: ${COHERE_API_KEY}
       auth_mode: api_key
       provider: cohere
       default: true
 
     mistral-1:
-      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/ebb20f41-924f-4fd7-b97e-92f4eb85ddba
+      gateway_url: ${MISTRAL_1_GATEWAY_URL}
       gateway_api_key: ${MISTRAL_API_KEY}
       auth_mode: api_key
       provider: mistral
@@ -110,7 +110,7 @@ gateway_mode:
 
     # -- Additional named gateways (selected via agentsec.gateway("name")) ----
     bedrock-2:
-      gateway_url: https://gateway.preview.aidefense.aiteam.cisco.com/192caeea-9955-44a9-8ef4-19006f5beb10/connections/8ed6c8ae-66c7-4fcb-940a-c9fc80891c96
+      gateway_url: ${BEDROCK_2_GATEWAY_URL}
       auth_mode: aws_sigv4          # fully explicit, no inheritance
       provider: bedrock
       aws_region: ${BEDROCK_2_AWS_REGION}
@@ -127,11 +127,11 @@ gateway_mode:
   #   oauth2_client_credentials  - OAuth 2.0 Client Credentials grant
   mcp_gateways:
     https://remote.mcpservers.org/fetch/mcp:
-      gateway_url: https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/tenant/192caeea-9955-44a9-8ef4-19006f5beb10/connections/d988fe8f-ff40-4877-9728-398b7cb13259/server/e740184e-e082-420b-8e6c-eb74e0c60c24
+      gateway_url: ${MCP_FETCH_GATEWAY_URL}
       auth_mode: none
 
     https://mcp.time.mcpcentral.io:
-      gateway_url: https://gateway.agent.preview.aidefense.aiteam.cisco.com/mcp/tenant/192caeea-9955-44a9-8ef4-19006f5beb10/connections/2d9e1387-d1ad-4c0a-93d6-61e1c39ce0c0/server/5446f8d2-04bf-433e-9e27-acb2f80185fa
+      gateway_url: ${MCP_TIME_GATEWAY_URL}
       auth_mode: none
 
     # -- Example: API Key auth --
@@ -153,6 +153,11 @@ gateway_mode:
 # Used when llm_integration_mode or mcp_integration_mode is "api".
 api_mode:
   llm_defaults:
+    # NOTE: The hardcoded SDK default for api_mode.llm_defaults.fail_open is
+    # false (fail-closed), which is the recommended setting for production.
+    # We override it to true here for ease of development and testing so that
+    # LLM calls still proceed even when the AI Defense inspection API is
+    # unreachable.  Set this to false in production / high-security deployments.
     fail_open: true
     timeout: 5                      # seconds for inspection API calls
     retry:
@@ -170,12 +175,28 @@ api_mode:
 
   llm:
     mode: enforce                   # off | monitor | enforce
-    endpoint: https://preview.api.inspect.aidefense.aiteam.cisco.com/api
+    endpoint: ${AI_DEFENSE_API_MODE_LLM_ENDPOINT}
     api_key: ${AI_DEFENSE_API_MODE_LLM_API_KEY}
+    # -- Custom inspection rules (optional) ------------------------------------
+    # When omitted, ALL rules are evaluated (server default).
+    # When specified, ONLY these rules are evaluated -- unspecified rules are
+    # skipped entirely.  Use this to reduce false positives or focus inspection
+    # on the threats most relevant to your application.
+    #
+    # Supported rule names:
+    #   Prompt Injection, PII, PCI, PHI, Code Detection, Harassment,
+    #   Hate Speech, Profanity, Toxicity, Sexual Content & Exploitation,
+    #   Social Division & Polarization, Violence & Public Safety Threats
+    #
+    # rules:
+    #   - rule_name: "Prompt Injection"
+    #   - rule_name: "PII"
+    #     entity_types: ["Email Address", "Phone Number"]
+    #   - rule_name: "Code Detection"
 
   mcp:
     mode: enforce                   # off | monitor | enforce
-    endpoint: https://preview.api.inspect.aidefense.aiteam.cisco.com/api
+    endpoint: ${AI_DEFENSE_API_MODE_MCP_ENDPOINT}
     api_key: ${AI_DEFENSE_API_MODE_MCP_API_KEY}
 
 # -- Logging ------------------------------------------------------------------

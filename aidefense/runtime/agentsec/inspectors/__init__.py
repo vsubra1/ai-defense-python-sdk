@@ -23,10 +23,6 @@ __all__ = [
 
 logger = logging.getLogger("aidefense.runtime.agentsec.inspectors")
 
-# Re-export for convenience
-inspect_llm = LLMInspector
-inspect_mcp = MCPInspector
-
 # Global registry of inspector instances for cleanup on shutdown
 _inspector_registry: List[Any] = []
 

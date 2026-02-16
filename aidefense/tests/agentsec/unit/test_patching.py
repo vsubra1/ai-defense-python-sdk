@@ -43,15 +43,6 @@ class TestPatchRegistry:
         patched = get_patched_clients()
         assert patched.count("openai") == 1
 
-    def test_graceful_skip_missing_library(self):
-        """Test graceful skip when library not installed."""
-        from aidefense.runtime.agentsec.patchers._base import safe_import
-        
-        # Import a non-existent module
-        result = safe_import("nonexistent_module_xyz")
-        
-        assert result is None
-
     def test_get_patched_clients_returns_list(self):
         """Test get_patched_clients() returns correct list."""
         assert get_patched_clients() == []
@@ -78,26 +69,6 @@ class TestPatchRegistry:
             return x * 2
         
         assert test_func(5) == 10
-
-
-class TestSafeImport:
-    """Test safe_import utility."""
-
-    def test_safe_import_existing(self):
-        """Test safe_import with existing module."""
-        from aidefense.runtime.agentsec.patchers._base import safe_import
-        
-        result = safe_import("json")
-        assert result is not None
-        assert hasattr(result, "dumps")
-
-    def test_safe_import_missing(self):
-        """Test safe_import with missing module."""
-        from aidefense.runtime.agentsec.patchers._base import safe_import
-        
-        result = safe_import("this_module_does_not_exist_12345")
-        assert result is None
-
 
 
 

@@ -15,7 +15,7 @@ google-cloud-aiplatform[agent_engines,langchain]==1.133.0
 
 # LangChain for agent framework
 langchain>=0.3.0
-langchain-google-vertexai>=2.0.0
+langchain-google-genai>=2.0.0
 langchain-core>=0.3.0
 
 # Nested event loops for sync tool calling async MCP

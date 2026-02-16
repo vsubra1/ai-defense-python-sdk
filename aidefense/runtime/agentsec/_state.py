@@ -1,10 +1,13 @@
 """Global state management for agentsec."""
 
+import logging
 import threading
 from typing import Any, Dict, List, Optional
 
 from .gateway_settings import GatewaySettings
 
+
+logger = logging.getLogger("aidefense.runtime.agentsec._state")
 
 # Thread lock for state mutations
 _state_lock = threading.Lock()
@@ -15,9 +18,15 @@ SUPPORTED_PROVIDERS = [
     "google_genai", "cohere", "mistral",
 ]
 
-# Valid configuration values
-VALID_API_MODES = {"off", "monitor", "enforce"}
-VALID_INTEGRATION_MODES = {"api", "gateway"}
+# Valid configuration values — import canonical definitions from config.py
+# to avoid duplicate definitions that could drift.
+from .config import VALID_MODES as _VALID_MODES_TUPLE, VALID_INTEGRATION_MODES as _VALID_INTEGRATION_MODES_TUPLE
+
+VALID_API_MODES = set(_VALID_MODES_TUPLE)
+VALID_INTEGRATION_MODES = set(_VALID_INTEGRATION_MODES_TUPLE)
+VALID_AUTH_MODES = {"none", "api_key", "aws_sigv4", "google_adc", "oauth2_client_credentials"}
+VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+VALID_LOG_FORMATS = {"text", "json"}
 
 # ---------------------------------------------------------------------------
 # Global state variables
@@ -341,8 +350,21 @@ def resolve_llm_gateway_settings(
 
     Returns:
         A fully-resolved GatewaySettings object.
+
+    Raises:
+        ConfigurationError: If gateway_url is empty or auth_mode is invalid.
     """
+    from .exceptions import ConfigurationError
+
     retry = raw_config.get("retry", {}) or {}
+
+    # Validate gateway_url is non-empty
+    gateway_url = raw_config.get("gateway_url", "")
+    if not gateway_url or not isinstance(gateway_url, str) or not gateway_url.strip():
+        raise ConfigurationError(
+            "gateway_url is required and must be a non-empty string "
+            "in LLM gateway configuration."
+        )
 
     # Resolve auth_mode: explicit > default gateway for provider > "api_key"
     auth_mode = raw_config.get("auth_mode")
@@ -351,6 +373,13 @@ def resolve_llm_gateway_settings(
         auth_mode = default_gw.get("auth_mode")
     if not auth_mode:
         auth_mode = "api_key"
+
+    # Validate auth_mode
+    if auth_mode not in VALID_AUTH_MODES:
+        raise ConfigurationError(
+            f"Invalid auth_mode: '{auth_mode}'. "
+            f"Must be one of: {', '.join(sorted(VALID_AUTH_MODES))}"
+        )
 
     return GatewaySettings(
         url=raw_config.get("gateway_url", ""),
@@ -394,8 +423,21 @@ def resolve_mcp_gateway_settings(raw_config: dict) -> GatewaySettings:
 
     Returns:
         A fully-resolved GatewaySettings object.
+
+    Raises:
+        ConfigurationError: If gateway_url is empty or auth_mode is invalid.
     """
+    from .exceptions import ConfigurationError
+
     retry = raw_config.get("retry", {}) or {}
+
+    # Validate gateway_url is non-empty
+    gateway_url = raw_config.get("gateway_url", "")
+    if not gateway_url or not isinstance(gateway_url, str) or not gateway_url.strip():
+        raise ConfigurationError(
+            "gateway_url is required and must be a non-empty string "
+            "in MCP gateway configuration."
+        )
 
     # Infer auth_mode for backward compatibility
     explicit_auth_mode = raw_config.get("auth_mode")
@@ -406,6 +448,13 @@ def resolve_mcp_gateway_settings(raw_config: dict) -> GatewaySettings:
         auth_mode = "api_key"
     else:
         auth_mode = "none"
+
+    # Validate auth_mode
+    if auth_mode not in VALID_AUTH_MODES:
+        raise ConfigurationError(
+            f"Invalid auth_mode: '{auth_mode}'. "
+            f"Must be one of: {', '.join(sorted(VALID_AUTH_MODES))}"
+        )
 
     return GatewaySettings(
         url=raw_config.get("gateway_url", ""),
@@ -428,20 +477,48 @@ def resolve_mcp_gateway_settings(raw_config: dict) -> GatewaySettings:
 # set_state / reset
 # ===========================================================================
 
-def _unpack_defaults(defaults_dict: Optional[dict]) -> dict:
+# Known keys for defaults and retry sub-dicts (used for unknown-key warnings)
+_KNOWN_DEFAULT_KEYS = {"fail_open", "timeout", "retry"}
+_KNOWN_RETRY_KEYS = {"total", "backoff_factor", "status_codes"}
+
+
+def _unpack_defaults(defaults_dict: Optional[dict], prefix: str = "") -> dict:
     """Unpack a defaults dict (llm_defaults or mcp_defaults) into flat keys.
 
     Returns dict with keys: fail_open, timeout, retry_total,
     retry_backoff, retry_status_codes (any of which may be absent).
+
+    Also warns about unknown keys that may indicate typos.
     """
     if not defaults_dict:
         return {}
+
+    # Warn about unknown top-level keys in the defaults dict
+    for key in defaults_dict:
+        if key not in _KNOWN_DEFAULT_KEYS:
+            logger.warning(
+                f"Unknown key '{key}' in {prefix or 'defaults'}. "
+                f"Known keys: {', '.join(sorted(_KNOWN_DEFAULT_KEYS))}. "
+                f"Check for typos."
+            )
+
     result = {}
     if "fail_open" in defaults_dict:
         result["fail_open"] = defaults_dict["fail_open"]
     if "timeout" in defaults_dict:
         result["timeout"] = defaults_dict["timeout"]
     retry = defaults_dict.get("retry", {}) or {}
+
+    # Warn about unknown keys in the retry sub-dict
+    for key in retry:
+        if key not in _KNOWN_RETRY_KEYS:
+            retry_prefix = f"{prefix}.retry" if prefix else "retry"
+            logger.warning(
+                f"Unknown key '{key}' in {retry_prefix}. "
+                f"Known keys: {', '.join(sorted(_KNOWN_RETRY_KEYS))}. "
+                f"Check for typos."
+            )
+
     if "total" in retry:
         result["retry_total"] = retry["total"]
     if "backoff_factor" in retry:
@@ -449,6 +526,97 @@ def _unpack_defaults(defaults_dict: Optional[dict]) -> dict:
     if "status_codes" in retry:
         result["retry_status_codes"] = retry["status_codes"]
     return result
+
+
+def _validate_defaults(prefix: str, unpacked: dict) -> None:
+    """Validate unpacked defaults values for type and range.
+
+    Args:
+        prefix: Human-readable location for error messages
+            (e.g., "gateway_mode.llm_defaults", "api_mode.mcp_defaults").
+        unpacked: The dict produced by ``_unpack_defaults()``.
+
+    Raises:
+        ConfigurationError: If any value has the wrong type or is
+            out of the allowed range.
+    """
+    from .exceptions import ConfigurationError
+
+    # -- fail_open --
+    if "fail_open" in unpacked:
+        val = unpacked["fail_open"]
+        if not isinstance(val, bool):
+            raise ConfigurationError(
+                f"Invalid {prefix}.fail_open: {val!r} (type {type(val).__name__}). "
+                f"Must be a boolean (true/false)."
+            )
+
+    # -- timeout --
+    if "timeout" in unpacked:
+        val = unpacked["timeout"]
+        if not isinstance(val, (int, float)):
+            raise ConfigurationError(
+                f"Invalid {prefix}.timeout: {val!r} (type {type(val).__name__}). "
+                f"Must be a number (seconds)."
+            )
+        if val <= 0:
+            raise ConfigurationError(
+                f"Invalid {prefix}.timeout: {val}. Must be > 0."
+            )
+        if val > 3600:
+            raise ConfigurationError(
+                f"Invalid {prefix}.timeout: {val}. Must be <= 3600 (1 hour)."
+            )
+
+    # -- retry_total --
+    if "retry_total" in unpacked:
+        val = unpacked["retry_total"]
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise ConfigurationError(
+                f"Invalid {prefix}.retry.total: {val!r} (type {type(val).__name__}). "
+                f"Must be an integer."
+            )
+        if val < 1:
+            raise ConfigurationError(
+                f"Invalid {prefix}.retry.total: {val}. Must be >= 1."
+            )
+        if val > 50:
+            raise ConfigurationError(
+                f"Invalid {prefix}.retry.total: {val}. Must be <= 50."
+            )
+
+    # -- retry_backoff --
+    if "retry_backoff" in unpacked:
+        val = unpacked["retry_backoff"]
+        if not isinstance(val, (int, float)) or isinstance(val, bool):
+            raise ConfigurationError(
+                f"Invalid {prefix}.retry.backoff_factor: {val!r} (type {type(val).__name__}). "
+                f"Must be a number."
+            )
+        if val < 0:
+            raise ConfigurationError(
+                f"Invalid {prefix}.retry.backoff_factor: {val}. Must be >= 0."
+            )
+
+    # -- retry_status_codes --
+    if "retry_status_codes" in unpacked:
+        val = unpacked["retry_status_codes"]
+        if not isinstance(val, list):
+            raise ConfigurationError(
+                f"Invalid {prefix}.retry.status_codes: {val!r} (type {type(val).__name__}). "
+                f"Must be a list of HTTP status codes."
+            )
+        for i, code in enumerate(val):
+            if not isinstance(code, int) or isinstance(code, bool):
+                raise ConfigurationError(
+                    f"Invalid {prefix}.retry.status_codes[{i}]: {code!r} "
+                    f"(type {type(code).__name__}). Must be an integer."
+                )
+            if code < 100 or code > 599:
+                raise ConfigurationError(
+                    f"Invalid {prefix}.retry.status_codes[{i}]: {code}. "
+                    f"Must be a valid HTTP status code (100-599)."
+                )
 
 
 def set_state(
@@ -523,23 +691,42 @@ def set_state(
             f"Invalid pool_max_keepalive: {pool_max_keepalive}. Must be >= 0"
         )
 
+    # Validate log_format if provided
+    if log_format is not None and log_format.lower() not in VALID_LOG_FORMATS:
+        raise ConfigurationError(
+            f"Invalid logging.format: '{log_format}'. "
+            f"Must be one of: {', '.join(sorted(VALID_LOG_FORMATS))}"
+        )
+
     # Unpack gateway_mode dict
     gw = gateway_mode or {}
-    gw_llm_defs = _unpack_defaults(gw.get("llm_defaults"))
-    gw_mcp_defs = _unpack_defaults(gw.get("mcp_defaults"))
+    gw_llm_defs = _unpack_defaults(gw.get("llm_defaults"), prefix="gateway_mode.llm_defaults")
+    gw_mcp_defs = _unpack_defaults(gw.get("mcp_defaults"), prefix="gateway_mode.mcp_defaults")
+    _validate_defaults("gateway_mode.llm_defaults", gw_llm_defs)
+    _validate_defaults("gateway_mode.mcp_defaults", gw_mcp_defs)
     llm_gateways_dict = gw.get("llm_gateways") or {}
     mcp_gateways_dict = gw.get("mcp_gateways") or {}
 
     # Build provider-default index from llm_gateways entries with default: true
     provider_defaults: Dict[str, dict] = {}
     for _gw_name, _gw_cfg in llm_gateways_dict.items():
-        if isinstance(_gw_cfg, dict) and _gw_cfg.get("default") and _gw_cfg.get("provider"):
-            provider_defaults[_gw_cfg["provider"]] = _gw_cfg
+        if isinstance(_gw_cfg, dict):
+            # Validate provider if present
+            _gw_provider = _gw_cfg.get("provider")
+            if _gw_provider is not None and _gw_provider not in SUPPORTED_PROVIDERS:
+                raise ConfigurationError(
+                    f"Invalid provider '{_gw_provider}' in gateway '{_gw_name}'. "
+                    f"Must be one of: {', '.join(SUPPORTED_PROVIDERS)}"
+                )
+            if _gw_cfg.get("default") and _gw_provider:
+                provider_defaults[_gw_provider] = _gw_cfg
 
     # Unpack api_mode dict
     am = api_mode or {}
-    api_llm_defs = _unpack_defaults(am.get("llm_defaults"))
-    api_mcp_defs = _unpack_defaults(am.get("mcp_defaults"))
+    api_llm_defs = _unpack_defaults(am.get("llm_defaults"), prefix="api_mode.llm_defaults")
+    api_mcp_defs = _unpack_defaults(am.get("mcp_defaults"), prefix="api_mode.mcp_defaults")
+    _validate_defaults("api_mode.llm_defaults", api_llm_defs)
+    _validate_defaults("api_mode.mcp_defaults", api_mcp_defs)
     api_llm_cfg = am.get("llm") or {}
     api_mcp_cfg = am.get("mcp") or {}
 
@@ -648,11 +835,10 @@ def set_state(
             "retry_status_codes", [429, 500, 502, 503, 504]
         )
 
-        # Also store rules/entity_types from api_mode if provided
-        if api_llm_cfg.get("rules") is not None:
-            _llm_rules = api_llm_cfg["rules"]
-        if api_llm_cfg.get("entity_types") is not None:
-            _llm_entity_types = api_llm_cfg["entity_types"]
+        # Note: _llm_rules and _llm_entity_types are set from the
+        # llm_rules / llm_entity_types parameters above (lines 767-768).
+        # The caller (protect()) already extracts these from
+        # api_mode["llm"], so there is no need to re-extract here.
 
 
 def reset() -> None:

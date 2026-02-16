@@ -80,23 +80,6 @@ def env_vars():
     os.environ.update(original)
 
 
-@pytest.fixture
-def mock_httpx_client():
-    """Mock httpx client for AI Defense API calls."""
-    with patch("agentsec.inspectors.api_llm.httpx") as mock_httpx:
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"action": "Allow", "reasons": []}
-        mock_response.raise_for_status = MagicMock()
-        
-        mock_client = MagicMock()
-        mock_client.post.return_value = mock_response
-        mock_httpx.Client.return_value.__enter__ = MagicMock(return_value=mock_client)
-        mock_httpx.Client.return_value.__exit__ = MagicMock(return_value=None)
-        mock_httpx.Client.return_value = mock_client
-        
-        yield mock_httpx, mock_response
-
-
 # =============================================================================
 # Test: Client Patching
 # =============================================================================

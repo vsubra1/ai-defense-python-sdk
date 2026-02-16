@@ -184,8 +184,13 @@ class TestSetStateWithApiMode:
     """Tests for set_state() with the new api_mode dict."""
 
     def test_api_llm_config_unpacked(self):
+        # Note: protect() extracts rules/entity_types from api_mode["llm"]
+        # and passes them as separate llm_rules/llm_entity_types params.
+        # This test mirrors that real calling convention.
         _state.set_state(
             initialized=True,
+            llm_rules=["jailbreak"],
+            llm_entity_types=["EMAIL"],
             api_mode={
                 "llm": {
                     "mode": "enforce",

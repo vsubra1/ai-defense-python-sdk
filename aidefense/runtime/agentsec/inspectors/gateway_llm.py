@@ -47,6 +47,15 @@ class GatewayClient:
     The Gateway uses a different authentication header format than the
     inspection API: `api-key: {key}` instead of `X-Cisco-AI-Defense-API-Key`.
     
+    .. todo::
+        The individual LLM patchers (openai.py, bedrock.py, etc.) currently
+        create raw ``httpx.Client`` / ``httpx.AsyncClient`` instances per
+        gateway request instead of delegating to this class.  This duplicates
+        retry, backoff, and error-handling logic and creates a new connection
+        pool on every call.  Refactoring patchers to use ``GatewayClient``
+        would improve performance (connection reuse) and reduce code
+        duplication across all 8 patchers.
+    
     Attributes:
         gateway_url: Full gateway URL (user-provided, includes tenant-id, connection-id, etc.)
         api_key: API key for gateway authentication
@@ -89,7 +98,7 @@ class GatewayClient:
         self.api_key = api_key
         self.timeout_ms = timeout_ms
         self.retry_attempts = max(1, retry_attempts)
-        self.retry_backoff = retry_backoff
+        self.retry_backoff = max(0.0, retry_backoff)
         self.retry_status_codes = retry_status_codes or self.DEFAULT_RETRY_STATUS_CODES
         self.fail_open = fail_open
         

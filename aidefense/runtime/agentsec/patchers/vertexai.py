@@ -138,14 +138,17 @@ def _serialize_vertexai_part(part: Any) -> Optional[Dict]:
 def _serialize_vertexai_obj(obj: Any) -> Any:
     """Serialize a Vertex AI SDK object (Tool, ToolConfig, etc.) to JSON-compatible form.
 
-    Handles proto-plus objects, dicts, and lists.
+    Handles proto-plus objects, dicts, and lists.  Recursively processes
+    dicts so that nested SDK objects are fully converted to plain
+    JSON-safe primitives.
     """
     if obj is None:
         return None
     if isinstance(obj, (str, int, float, bool)):
         return obj
     if isinstance(obj, dict):
-        return obj
+        # Recurse into values – a dict may contain nested SDK objects
+        return {k: _serialize_vertexai_obj(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_serialize_vertexai_obj(item) for item in obj]
     # Proto-plus
@@ -170,6 +173,30 @@ def _serialize_vertexai_obj(obj: Any) -> Any:
         except Exception:
             pass
     return obj
+
+
+def _deep_sanitize_vertexai(obj: Any) -> Any:
+    """Recursively convert *obj* to JSON-safe primitives.
+
+    Safety net called when :func:`json.dumps` raises ``TypeError``
+    on the assembled Vertex AI request body.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (bool,)):
+        return obj
+    if isinstance(obj, (int, float)):
+        return obj
+    if isinstance(obj, str):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _deep_sanitize_vertexai(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_deep_sanitize_vertexai(v) for v in obj]
+    serialized = _serialize_vertexai_obj(obj)
+    if serialized is not obj:
+        return _deep_sanitize_vertexai(serialized)
+    return str(obj)
 
 
 def _handle_vertexai_gateway_call(
@@ -283,19 +310,25 @@ def _handle_vertexai_gateway_call(
     logger.debug(f"[GATEWAY] URL: {full_gateway_url}")
     logger.debug(f"[GATEWAY] Model: {model_name}")
     logger.debug(f"[GATEWAY] Request body keys: {list(request_body.keys())}")
+
+    # Pre-serialize to catch non-JSON-serializable objects early and
+    # ensure the exact bytes we intend are sent to the gateway.
+    import json as _json
+    try:
+        _body_bytes = _json.dumps(request_body).encode("utf-8")
+    except TypeError:
+        logger.warning("[GATEWAY] request_body contains non-JSON-serializable objects, applying deep sanitization")
+        request_body = _deep_sanitize_vertexai(request_body)
+        _body_bytes = _json.dumps(request_body).encode("utf-8")
+
     if logger.isEnabledFor(logging.DEBUG):
-        import json as _json
-        try:
-            _body_str = _json.dumps(request_body, default=str)
-            logger.debug(f"[GATEWAY] Full request body ({len(_body_str)} bytes): {_body_str[:5000]}")
-        except Exception as _log_err:
-            logger.debug(f"[GATEWAY] Could not serialize request body for logging: {_log_err}")
-    
+        logger.debug(f"[GATEWAY] Full request body ({len(_body_bytes)} bytes): {_body_bytes[:5000].decode('utf-8', errors='replace')}")
+
     try:
         with httpx.Client(timeout=float(gw_settings.timeout)) as client:
             response = client.post(
                 full_gateway_url,
-                json=request_body,
+                content=_body_bytes,
                 headers={
                     **auth_headers,
                     "Content-Type": "application/json",
@@ -312,6 +345,21 @@ def _handle_vertexai_gateway_call(
         
     except httpx.HTTPStatusError as e:
         logger.error(f"[GATEWAY] HTTP error: {e}")
+        _resp_text = ""
+        try:
+            _resp_text = e.response.text[:1000] if hasattr(e.response, 'text') else ""
+            logger.error(f"[GATEWAY] HTTP {e.response.status_code} — body preview: {_resp_text}")
+        except Exception:
+            pass
+        if "Invalid JSON payload" in _resp_text:
+            logger.error(
+                "[GATEWAY] The AI Defense gateway returned 'Invalid JSON "
+                "payload'.  This is a known gateway limitation when the "
+                "request body exceeds ~2700 bytes (e.g. requests with "
+                "multiple tool declarations).  Workaround: use "
+                "llm_integration_mode=api until the gateway team resolves "
+                "this issue."
+            )
         if gw_settings.fail_open:
             logger.warning(f"[GATEWAY] fail_open=True, re-raising original HTTP error for caller to handle")
             set_inspection_context(decision=Decision.allow(reasons=["Gateway error, fail_open=True"]), done=True)

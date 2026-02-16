@@ -294,6 +294,7 @@ run_example_tests "gateway_mode_example.py" "gateway_mode_example.py"
 run_example_tests "skip_inspection_example.py" "skip_inspection_example.py"
 run_example_tests "simple_strands_bedrock.py" "simple_strands_bedrock.py"
 run_example_tests "multi_gateway_example.py" "multi_gateway_example.py"
+run_example_tests "custom_rules_example.py" "custom_rules_example.py"
 
 # Calculate total time
 TOTAL_END_TIME=$(date +%s)

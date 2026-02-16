@@ -94,8 +94,8 @@ class TestExceptionChaining:
             try:
                 raise exc
             except AgentsecError as e:
-                # Should catch all
-                assert True
+                assert isinstance(e, AgentsecError)
+                assert e is exc
             except Exception:
                 pytest.fail(f"{type(exc).__name__} not caught by AgentsecError")
 

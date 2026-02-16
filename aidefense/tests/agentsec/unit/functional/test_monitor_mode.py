@@ -75,8 +75,6 @@ class TestMonitorMode:
     def test_monitor_mode_logs_block_decisions(self, caplog):
         """Test that monitor mode logs block decisions."""
         with _mock_session_request({"action": "Block", "reasons": ["suspicious_content"], "is_safe": False}):
-            logger = logging.getLogger("agentsec")
-            logger.handlers.clear()
             with patch("aidefense.runtime.agentsec._apply_patches"):
                 agentsec.protect(api_mode={"llm": {"mode": "monitor"}}, patch_clients=False)
             from aidefense.runtime.agentsec.inspectors.api_llm import LLMInspector
@@ -84,7 +82,7 @@ class TestMonitorMode:
                 api_key=TEST_API_KEY,
                 endpoint="http://test.api",
             )
-            with caplog.at_level(logging.WARNING, logger="agentsec"):
+            with caplog.at_level(logging.DEBUG, logger="aidefense.runtime.agentsec"):
                 decision = inspector.inspect_conversation(
                     messages=[{"role": "user", "content": "test"}],
                     metadata={},

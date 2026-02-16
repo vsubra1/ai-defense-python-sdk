@@ -3,8 +3,10 @@
 Streaming response example with agentsec protection.
 
 This example demonstrates how agentsec handles streaming LLM responses.
-Inspection happens incrementally as chunks arrive, enabling real-time
-policy enforcement even during streaming.
+For OpenAI, response chunks are inspected periodically (every N chunks)
+and a final inspection runs when the stream completes.  For other
+providers (Vertex AI, Cohere, Mistral), chunks are buffered and
+inspected once after the stream completes.
 
 Usage:
     python streaming_example.py
@@ -54,7 +56,7 @@ def main() -> None:
     client = OpenAI(api_key=api_key)
     
     print("Making streaming request...")
-    print("(Content will be inspected chunk-by-chunk)")
+    print("(OpenAI: inspected periodically during stream + final inspection at completion)")
     print()
     print("Response:", end=" ")
     

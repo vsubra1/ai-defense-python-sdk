@@ -19,6 +19,7 @@ patch covers AzureOpenAI without requiring separate handling.
 """
 
 import logging
+import re
 import threading
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -29,7 +30,6 @@ from .._context import get_inspection_context, set_inspection_context
 from ..decision import Decision
 from ..exceptions import SecurityPolicyError
 from ..inspectors.api_llm import LLMInspector
-from ..inspectors.gateway_llm import GatewayClient
 from . import is_patched, mark_patched
 from ._base import safe_import, resolve_gateway_settings
 
@@ -38,10 +38,6 @@ logger = logging.getLogger("aidefense.runtime.agentsec.patchers.openai")
 # Global inspector instance with thread-safe initialization
 _inspector: Optional[LLMInspector] = None
 _inspector_lock = threading.Lock()
-
-# Global gateway client instance
-_gateway_client: Optional[GatewayClient] = None
-_gateway_lock = threading.Lock()
 
 # Maximum buffer size for streaming inspection (1MB)
 # Prevents memory issues with very long streaming responses
@@ -147,8 +143,6 @@ def _get_azure_deployment_name(instance, kwargs: Dict[str, Any]) -> Optional[str
     Returns:
         Deployment name string or None if not available
     """
-    import re
-    
     # First try kwargs["model"] - this is the standard way
     model = kwargs.get("model")
     if model:

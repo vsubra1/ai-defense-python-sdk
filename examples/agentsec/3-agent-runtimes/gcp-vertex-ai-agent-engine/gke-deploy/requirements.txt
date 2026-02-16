@@ -9,7 +9,7 @@ google-cloud-aiplatform>=1.40.0
 
 # LangChain for agent framework
 langchain>=0.3.0
-langchain-google-vertexai>=2.0.0
+langchain-google-genai>=2.0.0
 langchain-core>=0.3.0
 
 # Web framework

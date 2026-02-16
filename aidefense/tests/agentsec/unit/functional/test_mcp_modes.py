@@ -52,6 +52,7 @@ class TestMCPOffMode:
             
             # The patcher checks _should_inspect before calling inspect_request
             # So inspect_request should never be called when mode is off
+            mock_inspect.assert_not_called()
 
 
 class TestMCPMonitorMode:

@@ -64,8 +64,10 @@ class TestAzureOpenAICoverage:
         
         # Mock instance (simulating AzureOpenAI's Completions resource)
         mock_instance = MagicMock()
-        # AzureOpenAI-specific attributes
-        mock_instance._client = MagicMock()
+        # AzureOpenAI-specific attributes — use a type whose __name__ is 'AzureOpenAI'
+        # so _detect_provider correctly identifies the provider
+        AzureOpenAI = type("AzureOpenAI", (), {})
+        mock_instance._client = AzureOpenAI()
         mock_instance._client.azure_deployment = "gpt-4-deployment"
         mock_instance._client.api_version = "2024-02-01"
         

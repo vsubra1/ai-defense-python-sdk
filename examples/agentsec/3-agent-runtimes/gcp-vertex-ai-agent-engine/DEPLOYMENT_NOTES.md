@@ -40,7 +40,7 @@ aiohttp>=3.9.0
 requests>=2.28.0
 wrapt>=1.14.0
 langchain>=0.3.0
-langchain-google-vertexai>=2.0.0
+langchain-google-genai>=2.0.0
 ```
 
 ### 4. Agent Engine API Compatibility
@@ -147,7 +147,7 @@ export AGENTSEC_LLM_INTEGRATION_MODE=api
 ## Architecture
 
 ```
-User → Vertex AI Agent Engine → LangChain Agent → ChatVertexAI (LLM)
+User → Vertex AI Agent Engine → LangChain Agent → ChatGoogleGenerativeAI (LLM)
                                       ↓
                                  Tool Calling
                                       ↓

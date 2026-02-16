@@ -26,6 +26,7 @@ EXAMPLES = [
     "gateway_mode_example",
     "skip_inspection_example",
     "multi_gateway_example",
+    "custom_rules_example",
 ]
 
 
@@ -270,4 +271,33 @@ class TestStrandsBedrock:
         source = (SIMPLE_DIR / "simple_strands_bedrock.py").read_text()
         assert "load_dotenv" in source
         assert ".env" in source
+
+
+class TestCustomRulesExample:
+    """Tests specific to custom_rules_example.py."""
+
+    def test_uses_rules_parameter(self):
+        """Test custom_rules_example.py uses rules in api_mode."""
+        source = (SIMPLE_DIR / "custom_rules_example.py").read_text()
+        assert '"rules"' in source or "'rules'" in source, \
+            "Should use rules parameter"
+
+    def test_uses_api_mode_override(self):
+        """Test custom_rules_example.py overrides api_mode via protect() kwargs."""
+        source = (SIMPLE_DIR / "custom_rules_example.py").read_text()
+        assert "api_mode=" in source, \
+            "Should override api_mode via protect() kwargs"
+
+    def test_documents_rule_names(self):
+        """Test custom_rules_example.py documents supported rule names."""
+        source = (SIMPLE_DIR / "custom_rules_example.py").read_text()
+        assert "PII" in source, "Should mention PII rule"
+        assert "Prompt Injection" in source, "Should mention Prompt Injection rule"
+        assert "Code Detection" in source, "Should mention Code Detection rule"
+
+    def test_loads_yaml_config(self):
+        """Test custom_rules_example.py loads agentsec.yaml as base config."""
+        source = (SIMPLE_DIR / "custom_rules_example.py").read_text()
+        assert "config=" in source, "Should load YAML config"
+        assert "agentsec.yaml" in source, "Should reference agentsec.yaml"
 

@@ -66,9 +66,17 @@ for _yp in _yaml_paths:
 # All gateway/API mode settings (URLs, keys, modes, fail-open, retry, etc.)
 # are defined in agentsec.yaml. Secrets are referenced via ${VAR_NAME} and
 # resolved from the environment (populated by load_dotenv above).
+# Allow integration test scripts to override YAML integration mode via env vars
+_protect_kwargs = {}
+if os.getenv("AGENTSEC_LLM_INTEGRATION_MODE"):
+    _protect_kwargs["llm_integration_mode"] = os.getenv("AGENTSEC_LLM_INTEGRATION_MODE")
+if os.getenv("AGENTSEC_MCP_INTEGRATION_MODE"):
+    _protect_kwargs["mcp_integration_mode"] = os.getenv("AGENTSEC_MCP_INTEGRATION_MODE")
+
 agentsec.protect(
     config=_yaml_config,
     auto_dotenv=False,  # We already loaded .env manually
+    **_protect_kwargs,
 )
 
 print(f"[agentsec] Patched: {agentsec.get_patched_clients()}")

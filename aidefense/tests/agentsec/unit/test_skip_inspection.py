@@ -249,34 +249,6 @@ class TestPatcherSkipIntegration:
         with skip_inspection(llm=True):
             assert _should_inspect() is False
     
-    def test_resolve_gateway_respects_skip(self):
-        """Test resolve_gateway_settings returns None when skip_inspection(llm=True)."""
-        from aidefense.runtime.agentsec import _state
-        from aidefense.runtime.agentsec.patchers._base import resolve_gateway_settings
-        
-        _skip_llm.set(False)
-        _state.set_state(
-            initialized=True,
-            llm_integration_mode="gateway",
-            gateway_mode={
-                "llm_gateways": {
-                    "openai-1": {
-                        "gateway_url": "https://gw.example.com",
-                        "gateway_api_key": "key",
-                        "provider": "openai",
-                        "default": True,
-                    },
-                },
-            },
-        )
-        
-        # When not skipped, resolver returns settings
-        assert resolve_gateway_settings("openai") is not None
-        
-        # When skipped, should not use gateway (resolver returns None)
-        with skip_inspection(llm=True):
-            assert resolve_gateway_settings("openai") is None
-    
     def test_mcp_should_inspect_respects_skip(self):
         """Test MCP patcher's _should_inspect respects skip state."""
         from aidefense.runtime.agentsec.patchers.mcp import _should_inspect

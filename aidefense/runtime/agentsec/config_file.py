@@ -6,6 +6,7 @@ set (e.g., via python-dotenv loading a .env file) before calling
 load_config_file().
 """
 
+import logging
 import os
 import re
 from typing import Any
@@ -14,8 +15,19 @@ import yaml
 
 from .exceptions import ConfigurationError
 
+logger = logging.getLogger("aidefense.runtime.agentsec.config_file")
+
 # Pattern to match ${VAR_NAME} placeholders
 _ENV_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
+
+# Known top-level keys in agentsec.yaml
+_KNOWN_TOP_KEYS = {
+    "llm_integration_mode",
+    "mcp_integration_mode",
+    "gateway_mode",
+    "api_mode",
+    "logging",
+}
 
 
 def load_config_file(path: str) -> dict:
@@ -47,6 +59,15 @@ def load_config_file(path: str) -> dict:
             f"Configuration file {path} must contain a YAML mapping, "
             f"got {type(raw).__name__}"
         )
+
+    # Warn about unknown top-level keys (helps catch typos)
+    for key in raw:
+        if key not in _KNOWN_TOP_KEYS:
+            logger.warning(
+                "Unknown top-level key '%s' in %s. "
+                "Known keys: %s. Check for typos.",
+                key, path, ", ".join(sorted(_KNOWN_TOP_KEYS)),
+            )
 
     return _resolve_env_vars(raw)
 

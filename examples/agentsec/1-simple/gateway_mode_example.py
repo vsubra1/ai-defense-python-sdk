@@ -2,7 +2,14 @@
 """
 Cisco AI Defense Configuration Examples - API Mode & Gateway Mode.
 
-This demonstrates how to configure agentsec programmatically:
+This file is a **reference catalog** of configuration snippets, not a script
+that runs each example end-to-end.  Because ``protect()`` is idempotent (only
+the first successful call takes effect), only the ``main()`` function at the
+bottom actually initializes agentsec.  The individual ``example_*`` functions
+above it are standalone code samples that show how you *would* configure each
+mode — copy the one you need into your own application.
+
+Demonstrates how to configure agentsec programmatically:
 1. API Mode - Inspection via Cisco AI Defense API
 2. Gateway Mode - Route through Cisco AI Defense Gateway
 
@@ -36,6 +43,10 @@ from pathlib import Path
 # =============================================================================
 
 # --- API Mode Examples ---
+# NOTE: Each example_* function below calls protect() independently.
+# Because protect() is idempotent, only the FIRST call in a process wins.
+# These functions are meant as copy-paste reference snippets — do NOT call
+# more than one in the same process and expect different configurations.
 
 def example_api_mode_programmatic():
     """Configure API mode entirely in code."""

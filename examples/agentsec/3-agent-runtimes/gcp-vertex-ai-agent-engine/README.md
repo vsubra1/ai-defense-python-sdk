@@ -5,7 +5,7 @@ This example demonstrates how to protect AI agents running on Google Cloud Platf
 ## Architecture
 
 ```
-User Prompt → LangChain Agent → ChatVertexAI (LLM)
+User Prompt → LangChain Agent → ChatGoogleGenerativeAI (LLM)
                      ↓
                Tool Calling (Protected by agentsec)
                      ↓
@@ -193,8 +193,8 @@ agentsec.protect(
     auto_dotenv=False,         # .env already loaded manually
 )
 
-# NOW import LangChain (will use patched Vertex AI)
-from langchain_google_vertexai import ChatVertexAI
+# NOW import LangChain (will use patched google-genai)
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.tools import tool
 ```
 
@@ -206,7 +206,7 @@ The agent uses modern LangChain patterns:
 
 ```python
 # Create LLM with tool binding
-llm = ChatVertexAI(model="gemini-2.0-flash-001")
+llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-001", vertexai=True)
 llm_with_tools = llm.bind_tools([check_service_health, get_recent_logs, fetch_url])
 
 # Agent loop: invoke → check tool_calls → execute tools → repeat until done
@@ -280,7 +280,7 @@ All other agentsec settings (integration modes, gateway URLs, fail-open, retry, 
 | Feature | GCP Vertex AI (this example) | Amazon Bedrock AgentCore |
 |---------|------------------------------|--------------------------|
 | **Agent Framework** | LangChain | Strands Agent |
-| **LLM** | ChatVertexAI (Gemini) | BedrockModel (Claude) |
+| **LLM** | ChatGoogleGenerativeAI (Gemini) | BedrockModel (Claude) |
 | **Tool Definition** | `@tool` decorator (LangChain) | `@tool` decorator (Strands) |
 | **MCP Integration** | `mcp.client.session.ClientSession` | Same |
 | **agentsec Protection** | LLM + MCP calls | LLM + MCP calls |

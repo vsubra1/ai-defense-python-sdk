@@ -276,19 +276,19 @@ verify_ai_defense_protection() {
         patched=true
     fi
     
-    # For API mode, check for inspection logs
+    # For API mode, check for LLM-specific inspection logs (exclude MCP lines)
     if [ "$mode" = "api" ]; then
-        if grep -qi "LLM.*request.*inspection\|Request inspection" "$log_file"; then
+        if grep -qi "\[PATCHED CALL\] VertexAI\.\|google_genai.*Request inspection\|\[PATCHED CALL\] google_genai.*Request" "$log_file"; then
             llm_req=true
         fi
-        if grep -qi "LLM.*response.*inspection\|Response inspection" "$log_file"; then
+        if grep -qi "\[PATCHED CALL\] VertexAI\..*Response\|google_genai.*Response inspection\|\[PATCHED CALL\] google_genai.*Response" "$log_file"; then
             llm_resp=true
         fi
     fi
     
-    # For Gateway mode, check for gateway routing
+    # For Gateway mode, check for gateway routing of LLM calls
     if [ "$mode" = "gateway" ]; then
-        if grep -qi "Integration.*gateway\|LLM=gateway" "$log_file"; then
+        if grep -qi "\[PATCHED CALL\] VertexAI\..*Gateway\|\[PATCHED CALL\] google_genai\..*Gateway\|Integration.*gateway.*LLM=gateway" "$log_file"; then
             llm_req=true
             llm_resp=true  # Gateway handles both
         fi
@@ -448,6 +448,7 @@ test_agent_engine() {
     
     # Set environment for this test
     export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
+    export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
     export AGENTSEC_LOG_LEVEL="DEBUG"
     export GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:?Error: GOOGLE_CLOUD_PROJECT not set}"
     export GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:-us-central1}"
@@ -600,6 +601,7 @@ print('[MCP_SUCCESS] MCP tool call completed')
     
     # Set environment
     export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
+    export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
     
     # Deploy to Cloud Run
     log_info "Deploying to Cloud Run ($integration_mode mode)..."
@@ -765,6 +767,7 @@ print('[MCP_SUCCESS] MCP tool call completed')
     
     # Set environment
     export AGENTSEC_LLM_INTEGRATION_MODE="$integration_mode"
+    export AGENTSEC_MCP_INTEGRATION_MODE="$integration_mode"
     
     # Check if cluster exists, setup if needed
     CLUSTER_NAME="${GKE_CLUSTER:-sre-agent-cluster}"
@@ -993,7 +996,7 @@ done
 printf "║  %-22s ${BOLD}%dm %ds${NC}                                    ║\n" "Total Runtime:" "$TOTAL_DURATION_MIN" "$TOTAL_DURATION_SEC"
 echo "╠══════════════════════════════════════════════════════════════════════╣"
 echo "║  Protection Verified:                                                ║"
-echo "║    • LLM Request/Response: agentsec patches ChatVertexAI            ║"
+echo "║    • LLM Request/Response: agentsec patches google_genai             ║"
 echo "║    • MCP Request/Response: agentsec patches mcp.ClientSession       ║"
 echo "╚══════════════════════════════════════════════════════════════════════╝"
 echo ""

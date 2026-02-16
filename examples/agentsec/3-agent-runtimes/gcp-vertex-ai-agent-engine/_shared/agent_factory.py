@@ -8,7 +8,7 @@ agentsec.protect() is called BEFORE importing the AI library to ensure
 all calls are properly intercepted and inspected by Cisco AI Defense.
 
 ARCHITECTURE:
-    User Prompt → LangChain Agent → ChatVertexAI (LLM)
+    User Prompt → LangChain Agent → ChatGoogleGenerativeAI (LLM)
                          ↓
                    Tool Calling
                          ↓
@@ -24,10 +24,10 @@ ARCHITECTURE:
                    Final Response
 
 SUPPORTED LIBRARIES:
-- `vertexai` (google-cloud-aiplatform) - via langchain-google-vertexai
-- `google-genai` (google-genai) - Modern unified SDK (set GOOGLE_AI_SDK=google_genai)
-
-Set GOOGLE_AI_SDK=google_genai to use the modern SDK, otherwise defaults to vertexai.
+- `google-genai` (google-genai) - Modern unified SDK, via langchain-google-genai
+  Uses ChatGoogleGenerativeAI with vertexai=True, which internally uses the
+  google.genai.Client (patched by agentsec). This replaces the deprecated
+  ChatVertexAI that used GAPIC PredictionServiceClient (not interceptable).
 """
 
 import os
@@ -89,9 +89,17 @@ def _initialize_agentsec():
     # Import here to defer dependency loading
     from aidefense.runtime import agentsec
     
+    # Allow integration test scripts to override YAML integration mode via env vars
+    _protect_kwargs = {}
+    if os.getenv("AGENTSEC_LLM_INTEGRATION_MODE"):
+        _protect_kwargs["llm_integration_mode"] = os.getenv("AGENTSEC_LLM_INTEGRATION_MODE")
+    if os.getenv("AGENTSEC_MCP_INTEGRATION_MODE"):
+        _protect_kwargs["mcp_integration_mode"] = os.getenv("AGENTSEC_MCP_INTEGRATION_MODE")
+
     agentsec.protect(
         config=_yaml_config,
         auto_dotenv=False,  # We already loaded .env manually
+        **_protect_kwargs,
     )
     
     print(f"[agentsec] SDK: {GOOGLE_AI_SDK} | Patched: {agentsec.get_patched_clients()}")
@@ -101,7 +109,7 @@ def _initialize_agentsec():
 # =============================================================================
 # Import LangChain libraries (AFTER agentsec is ready to be initialized)
 # =============================================================================
-from langchain_google_vertexai import ChatVertexAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 
 # Import our tools
@@ -155,11 +163,19 @@ def _get_agent():
         print(f"[agent] Creating LangChain agent with model: {model_name}", flush=True)
         print(f"[agent] Project: {project}, Location: {location}", flush=True)
         
-        # Create the LLM
-        llm = ChatVertexAI(
+        # Create the LLM using ChatGoogleGenerativeAI with vertexai=True.
+        # This uses the google.genai.Client internally, which IS intercepted
+        # by agentsec patchers (unlike the deprecated ChatVertexAI that used
+        # GAPIC PredictionServiceClient which was not interceptable).
+        from google.auth import default as _auth_default
+        _credentials, _ = _auth_default()
+        
+        llm = ChatGoogleGenerativeAI(
             model=model_name,
+            vertexai=True,
             project=project,
             location=location,
+            credentials=_credentials,
             temperature=0.7,
             max_output_tokens=1024,
         )

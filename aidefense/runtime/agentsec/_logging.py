@@ -132,12 +132,18 @@ def setup_logging(
     
     # Determine level from param, env, or default
     level_str = level or os.environ.get("AGENTSEC_LOG_LEVEL", "WARNING")
+    _valid_log_levels = {"DEBUG", "INFO", "WARNING", "ERROR"}
     level_map = {
         "DEBUG": logging.DEBUG,
         "INFO": logging.INFO,
         "WARNING": logging.WARNING,
         "ERROR": logging.ERROR,
     }
+    if level_str.upper() not in _valid_log_levels:
+        logger.warning(
+            "Unknown logging level '%s'. Valid levels: %s. Defaulting to WARNING.",
+            level_str, ", ".join(sorted(_valid_log_levels)),
+        )
     log_level = level_map.get(level_str.upper(), logging.WARNING)
     logger.setLevel(log_level)
     

@@ -223,13 +223,19 @@ def _serialize_part(part: Any) -> Optional[Dict]:
 
 
 def _serialize_sdk_object(obj: Any) -> Any:
-    """Serialize a google-genai SDK object (Tool, ToolConfig, etc.) to a JSON-compatible dict."""
+    """Serialize a google-genai SDK object (Tool, ToolConfig, etc.) to a JSON-compatible dict.
+
+    Recursively processes dicts and lists so that nested SDK objects
+    (e.g. a dict whose values are Pydantic models) are fully converted
+    to plain JSON-safe primitives.
+    """
     if obj is None:
         return None
     if isinstance(obj, (str, int, float, bool)):
         return obj
     if isinstance(obj, dict):
-        return obj
+        # Recurse into values – a dict may contain nested SDK objects
+        return {k: _serialize_sdk_object(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_serialize_sdk_object(item) for item in obj]
     # Pydantic v2
@@ -256,6 +262,32 @@ def _serialize_sdk_object(obj: Any) -> Any:
         except Exception:
             pass
     return obj
+
+
+def _deep_sanitize(obj: Any) -> Any:
+    """Recursively convert *obj* to JSON-safe primitives.
+
+    This is the safety net called when :func:`json.dumps` raises
+    ``TypeError`` on the assembled request body.  It walks every value
+    and applies :func:`_serialize_sdk_object` to non-primitive leaves.
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (bool,)):          # bool before int (bool ⊂ int)
+        return obj
+    if isinstance(obj, (int, float)):
+        return obj
+    if isinstance(obj, str):
+        return obj
+    if isinstance(obj, dict):
+        return {str(k): _deep_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_deep_sanitize(v) for v in obj]
+    # Unknown type – try SDK serialization, then fall back to str()
+    serialized = _serialize_sdk_object(obj)
+    if serialized is not obj:             # serialization produced a new object
+        return _deep_sanitize(serialized)
+    return str(obj)
 
 
 def _handle_google_genai_gateway_call(
@@ -432,19 +464,26 @@ def _handle_google_genai_gateway_call(
     logger.debug(f"[GATEWAY] URL: {full_gateway_url}")
     logger.debug(f"[GATEWAY] Model: {model_name}")
     logger.debug(f"[GATEWAY] Request body keys: {list(request_body.keys())}")
+
+    # Pre-serialize to catch non-JSON-serializable objects early and
+    # ensure the exact bytes we intend are sent to the gateway.
+    import json as _json
+    try:
+        _body_bytes = _json.dumps(request_body).encode("utf-8")
+    except TypeError:
+        # Fallback: deep-sanitize then serialize
+        logger.warning("[GATEWAY] request_body contains non-JSON-serializable objects, applying deep sanitization")
+        request_body = _deep_sanitize(request_body)
+        _body_bytes = _json.dumps(request_body).encode("utf-8")
+
     if logger.isEnabledFor(logging.DEBUG):
-        import json as _json
-        try:
-            _body_str = _json.dumps(request_body, default=str)
-            logger.debug(f"[GATEWAY] Full request body ({len(_body_str)} bytes): {_body_str[:5000]}")
-        except Exception as _log_err:
-            logger.debug(f"[GATEWAY] Could not serialize request body for logging: {_log_err}")
-    
+        logger.debug(f"[GATEWAY] Full request body ({len(_body_bytes)} bytes): {_body_bytes[:5000].decode('utf-8', errors='replace')}")
+
     try:
         with httpx.Client(timeout=float(gw_settings.timeout)) as client:
             response = client.post(
                 full_gateway_url,
-                json=request_body,
+                content=_body_bytes,
                 headers={
                     **auth_headers,
                     "Content-Type": "application/json",
@@ -462,11 +501,24 @@ def _handle_google_genai_gateway_call(
     except httpx.HTTPStatusError as e:
         logger.error(f"[GATEWAY] HTTP error: {e}")
         # Log status code and truncated body for debugging (avoid leaking sensitive data)
+        _resp_text = ""
         try:
-            body_preview = e.response.text[:1000] if hasattr(e.response, 'text') else ""
-            logger.error(f"[GATEWAY] HTTP {e.response.status_code} — body preview: {body_preview}")
+            _resp_text = e.response.text[:1000] if hasattr(e.response, 'text') else ""
+            logger.error(f"[GATEWAY] HTTP {e.response.status_code} — body preview: {_resp_text}")
         except Exception:
             pass
+        # Detect gateway body-size corruption: the AI Defense gateway
+        # currently corrupts request bodies larger than ~2700 bytes when
+        # forwarding to Vertex AI, causing "Invalid JSON payload" errors.
+        if "Invalid JSON payload" in _resp_text:
+            logger.error(
+                "[GATEWAY] The AI Defense gateway returned 'Invalid JSON "
+                "payload'.  This is a known gateway limitation when the "
+                "request body exceeds ~2700 bytes (e.g. requests with "
+                "multiple tool declarations).  Workaround: use "
+                "llm_integration_mode=api until the gateway team resolves "
+                "this issue."
+            )
         if gw_settings.fail_open:
             # fail_open=True: allow request to proceed by re-raising original error
             logger.warning(f"[GATEWAY] fail_open=True, re-raising original HTTP error for caller to handle")
@@ -1047,6 +1099,7 @@ async def _wrap_generate_content_async(wrapped, instance, args, kwargs):
         messages_with_response = normalized + [
             {"role": "assistant", "content": assistant_content}
         ]
+        inspector = _get_inspector()
         decision = await inspector.ainspect_conversation(messages_with_response, metadata)
         logger.debug(f"[PATCHED CALL] google-genai.async - Response decision: {decision.action}")
         set_inspection_context(decision=decision, done=True)
